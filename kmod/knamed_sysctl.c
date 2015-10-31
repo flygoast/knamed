@@ -32,7 +32,44 @@
 #include "knamed.h"
 
 
+int sysctl_knamed_port;
+
+
 static struct ctl_table_header  *sysctl_header;
+
+
+static int knamed_port_sysctl(ctl_table *table, int write, void __user *buffer,
+    size_t *lenp, loff_t *ppos);
+
+
+static ctl_table  knamed_vars[] = {
+    {
+        .procname     = "port",
+        .data         = &sysctl_knamed_port,
+        .maxlen       = sizeof(int),
+        .mode         = 0644,
+        .proc_handler = knamed_port_sysctl,
+    },
+    {
+        .ctl_name = 0
+    }
+};
+
+
+const static struct ctl_path knamed_ctl_path[] = {
+    {
+        .procname = "net",
+        .ctl_name = CTL_NET,
+    },
+    {
+        .procname = "ipv4",
+        .ctl_name = NET_IPV4,
+    },
+    {
+        .procname = "knamed",
+    },
+    {}
+};
 
 
 static int
@@ -64,35 +101,6 @@ knamed_port_sysctl(ctl_table *table,
 /*
  * knamed sysctl table (under the /proc/sys/net/ipv4/knamed/)
  */
-
-static ctl_table  knamed_vars[] = {
-    {
-        .procname     = "port",
-        .data         = &sysctl_knamed_port,
-        .maxlen       = sizeof(int),
-        .mode         = 0644,
-        .proc_handler = knamed_port_sysctl,
-    },
-    {
-        .ctl_name = 0
-    }
-};
-
-
-const static struct ctl_path knamed_ctl_path[] = {
-    {
-        .procname = "net",
-        .ctl_name = CTL_NET,
-    },
-    {
-        .procname = "ipv4",
-        .ctl_name = NET_IPV4,
-    },
-    {
-        .procname = "knamed",
-    },
-    {}
-};
 
 
 int knamed_sysctl_register(void)

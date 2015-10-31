@@ -43,9 +43,6 @@
 #include "knamed_dns.h"
 
 
-int sysctl_knamed_port;
-
-
 static unsigned int knamed_in(unsigned int hooknum,
                               struct sk_buff *skb,
                               const struct net_device *in,

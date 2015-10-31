@@ -59,7 +59,7 @@
     printk(KERN_DEBUG LOG_PREFIX "[%s:%d] " fmt "\n",   \
            __func__, __LINE__, ##__VA_ARGS__)
 #else
-#define PR_DEBUG(fmt, ...)  /* nothing */ 
+#define PR_DEBUG(fmt, ...)  /* nothing */
 #endif
 
 
