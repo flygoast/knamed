@@ -32,7 +32,8 @@
 #include "knamed.h"
 
 
-int sysctl_knamed_port;
+int sysctl_knamed_port = KNAMED_PORT;
+int sysctl_knamed_ttl = KNAMED_TTL;
 
 
 static struct ctl_table_header  *sysctl_header;
@@ -40,8 +41,13 @@ static struct ctl_table_header  *sysctl_header;
 
 static int knamed_port_sysctl(ctl_table *table, int write, void __user *buffer,
     size_t *lenp, loff_t *ppos);
+static int knamed_ttl_sysctl(ctl_table *table, int write, void __user *buffer,
+    size_t *lenp, loff_t *ppos);
 
 
+/*
+ * knamed sysctl table (under the /proc/sys/net/ipv4/knamed/)
+ */
 static ctl_table  knamed_vars[] = {
     {
         .procname     = "port",
@@ -50,6 +56,15 @@ static ctl_table  knamed_vars[] = {
         .mode         = 0644,
         .proc_handler = knamed_port_sysctl,
     },
+
+    {
+        .procname     = "ttl",
+        .data         = &sysctl_knamed_ttl,
+        .maxlen       = sizeof(int),
+        .mode         = 0644,
+        .proc_handler = knamed_ttl_sysctl,
+    },
+
     {
         .ctl_name = 0
     }
@@ -98,12 +113,34 @@ knamed_port_sysctl(ctl_table *table,
 }
 
 
-/*
- * knamed sysctl table (under the /proc/sys/net/ipv4/knamed/)
- */
+static int
+knamed_ttl_sysctl(ctl_table *table,
+                  int write,
+                  void __user *buffer,
+                  size_t *lenp,
+                  loff_t *ppos)
+{
+    int  *valp = table->data;
+    int   val = *valp;
+    int   rc;
+
+    rc = proc_dointvec(table, write, buffer, lenp, ppos);
+    if (write && (*valp != val)) {
+        if (*valp < 0) {
+            PR_ERR("Invalid ttl: %d, must be positive", *valp);
+            /* Restore the correct value */
+            *valp = val;
+        } else {
+            PR_INFO("Change ttl from %d to %d", val, *valp);
+        }
+    }
+
+    return rc;
+}
 
 
-int knamed_sysctl_register(void)
+int
+knamed_sysctl_register(void)
 {
     sysctl_header = register_sysctl_paths(knamed_ctl_path, knamed_vars);
     if (sysctl_header == NULL) {

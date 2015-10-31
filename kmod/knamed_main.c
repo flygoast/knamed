@@ -232,10 +232,6 @@ static int __init knamed_init(void)
 
 init:
 
-    /* initialize sysctl variables */
-
-    sysctl_knamed_port = 53;
-
     ret = nf_register_hooks(knamed_ops, ARRAY_SIZE(knamed_ops));
     if (ret < 0) {
         PR_ERR("can't register hooks.");
