@@ -33,7 +33,7 @@
 #include "knamed_dns.h"
 
 
-static unsigned char  A_record[] = {
+static uint8_t  A_record[] = {
     0xc0, 0x0c,                         /* name */
     0x00, 0x01,                         /* type */
     0x00, 0x01,                         /* class */
@@ -46,75 +46,153 @@ static unsigned char  A_record[] = {
 /*
  * support version.bind:
  *  dig @127.0.0.1 version.bind TXT CHAOS
- *
- * Hard-coded response packet to the "version.bind" query
  */
-static unsigned char  version_bind_response[] = {
-    0x87, 0x31,         /* QUERY ID */
-    0x85, 0x00, 
-    0x00, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 
-    
-    0x07, 'v', 'e', 'r', 's', 'i', 'o', 'n', 0x04, 'b', 'i', 'n', 'd', 0x00, 
-    0x00, 0x10, 
-    0x00, 0x03, 
-    
-    0xc0, 0x0c, 
-    0x00, 0x10, 
-    0x00, 0x03, 
-    0x00, 0x00, 0x00, 0x00, 
-    0x00, 0x09, 
-    0x08, 
-    'k', 'n', 'a', 'm', 'e', 'd', '/', '1',
-    
+static uint8_t  version_bind_response[] = {
+    0x00, 0x00,         /* QUERY ID, should be replaced */
+    0x85, 0x00,
+    0x00, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00,
+
+    0x07, 'v', 'e', 'r', 's', 'i', 'o', 'n', 0x04, 'b', 'i', 'n', 'd', 0x00,
+    0x00, 0x10,
+    0x00, 0x03,
+
     0xc0, 0x0c,
-    0x00, 0x02, 
+    0x00, 0x10,
+    0x00, 0x03,
+    0x00, 0x00, 0x00, 0x00,
+    0x00, 0x09,
+    0x08,
+    'k', 'n', 'a', 'm', 'e', 'd', '/', '1',
+
+    0xc0, 0x0c,
+    0x00, 0x02,
     0x00, 0x03,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xc0, 0x0c,
 };
 
 
-int process_dns_query(struct dnshdr *dnsh, int dnslen, unsigned char *buf)
+static uint8_t  *version_bind_qname = (uint8_t *) version_bind_response
+                                      + sizeof(struct dnshdr);
+static int  version_bind_length = 14;
+
+
+struct dns_query {
+    uint16_t   id;
+    uint8_t    qname[256];
+    uint8_t    len;
+    uint16_t   qtype;
+    uint16_t   qclass;
+};
+
+
+static int parse_dns_query(struct dns_query *query, struct dnshdr *dnsh,
+    int dnslen);
+static int process_class_chaos(struct dns_query *query, uint8_t *buf);
+
+
+
+static int
+process_class_chaos(struct dns_query *query, uint8_t *buf)
 {
-    int              len, pos, llen;
-    struct dnshdr   *ndnsh;
-    unsigned char   *p;
-    unsigned char    lqname[256];
-    uint16_t         qtype, qclass;
-    unsigned char   *oldbuf = (unsigned char *) dnsh + sizeof(struct dnshdr);
-
-    pos = 0;
-    p = lqname + 1;
-
-    if (dnsh->opcode != OPCODE_QUERY) {
-        PR_ERR("Only standard query supported, dropped");
+    if (query->qtype != TYPE_TXT) {
+        PR_INFO("Only query version.bind of CHAOS TXT implemented");
         return -1;
     }
 
-    while ((llen = oldbuf[pos]) != 0) {
-        *p++ = llen;
+    if (query->len == version_bind_length
+        && memcmp(query->qname, version_bind_qname, query->len) == 0)
+    {
+
+        *(uint16_t *) buf = query->id;
+        memcpy(buf + 2, version_bind_response + 2,
+               sizeof(version_bind_response) - 2);
+        return sizeof(version_bind_response);
+    }
+
+    PR_INFO("Only query version.bind of CHAOS TXT implemented");
+    return -1;
+}
+
+
+static int
+process_class_in(struct dns_query *query, uint8_t *buf)
+{
+    int             len;
+    uint8_t        *p;
+    struct dnshdr  *ndnsh;
+
+    len = 12;
+
+    memcpy(buf + 12, query->qname, query->len);
+
+    len += query->len;
+    buf[len++] = 0;
+    buf[len++] = 1;
+    buf[len++] = 0;
+    buf[len++] = 1;
+    p = buf + len;
+
+    len += sizeof(A_record);
+    memcpy(p, A_record, sizeof(A_record));
+
+    ndnsh = (struct dnshdr *) buf;
+    ndnsh->id = query->id;
+
+    *((uint8_t *) ndnsh + 2) = 0x81;
+    *((uint8_t *) ndnsh + 3) = 0x80;
+    *((uint8_t *) ndnsh + 4) = 0;
+    *((uint8_t *) ndnsh + 5) = 1;
+    *((uint8_t *) ndnsh + 6) = 0;
+    *((uint8_t *) ndnsh + 7) = 1;
+    *((uint8_t *) ndnsh + 8) = 0;
+    *((uint8_t *) ndnsh + 9) = 0;
+    *((uint8_t *) ndnsh + 10) = 0;
+    *((uint8_t *) ndnsh + 11) = 0;
+
+    return len;
+}
+
+
+static int
+parse_dns_query(struct dns_query *query, struct dnshdr *dnsh, int dnslen)
+{
+    int       len, datalen, pos;
+    uint8_t  *buf, *p;
+
+    query->id = *(uint16_t *) dnsh;
+
+    buf = (uint8_t *) dnsh + sizeof(struct dnshdr);
+    p = &query->qname[0];
+    pos = 0;
+
+    datalen = dnslen - sizeof(struct dnshdr);
+
+    while ((len = buf[pos]) != 0) {
+        *p++ = len;
         pos++;
 
-        if (llen & 0xc0) {
+        if (len & 0xc0) {
             PR_ERR("Lable compression detected in query, dropped");
             return -1;
         }
 
-        if (pos + llen >= dnslen - sizeof(struct dnshdr)) {
+        if (pos + len >= datalen) {
             PR_ERR("Query name truncated, dropped");
             return -1;
         }
 
-        if (pos + llen > 254) {
+        if (pos + len > 254) {
             PR_ERR("Query domain name too long, dropped");
             return -1;
         }
 
-        /* copy lqname */
-        while (llen--) {
-            if (oldbuf[pos] > 0x40 && oldbuf[pos] < 0x5B) {
-                *p++ = oldbuf[pos++] | 0x20;
+        /* copy qname */
+        while (len--) {
+            /* upper letter */
+            if (buf[pos] > 0x40 && buf[pos] < 0x5B) {
+                *p++ = buf[pos++] | 0x20;
             } else {
-                *p++ = oldbuf[pos++];
+                *p++ = buf[pos++];
             }
         }
     }
@@ -122,58 +200,46 @@ int process_dns_query(struct dnshdr *dnsh, int dnslen, unsigned char *buf)
     *p++ = 0;
     pos++;
 
-    /* store the total length of the lowercased name */
-    *lqname = pos;
+    /* length of the lowercased name */
+    query->len = (uint8_t) pos;
 
-    if (pos + 4 > dnslen - sizeof(struct dnshdr)) {
-        PR_ERR("Packet length exhausted before parsing query type/class"
-               ", dropped");
+    if (pos + 4 > datalen) {
+        PR_ERR("Length exhausted before parsing query type/class, dropped");
         return -1;
     } else {
-        qtype = ntohs(*(uint16_t *) &oldbuf[pos]);
+        query->qtype = ntohs(*(uint16_t *) &buf[pos]);
         pos += 2;
-        qclass = ntohs(*(uint16_t *) &oldbuf[pos]);
+        query->qclass = ntohs(*(uint16_t *) &buf[pos]);
         pos += 2;
     }
 
-    if (qtype != TYPE_A && qtype != TYPE_CNAME) {
-        PR_ERR("Type not implemented: %d, dropped", qtype);
+    return 0;
+}
+
+
+int
+process_dns_query(struct dnshdr *dnsh, int dnslen, uint8_t *buf)
+{
+    struct dns_query  query;
+
+    if (dnsh->opcode != OPCODE_QUERY) {
+        PR_ERR("Only standard query supported, dropped");
         return -1;
     }
 
-    if (qclass != CLASS_IN && qclass != CLASS_CHAOS) {
-        PR_ERR("Class not implemented: %d, dropped", qclass);
+    if (parse_dns_query(&query, dnsh, dnslen) < 0) {
         return -1;
     }
 
-    len = 12;
+    switch (query.qclass) {
+    case CLASS_IN:
+        return process_class_in(&query, buf);
+    case CLASS_CHAOS:
+        return process_class_chaos(&query, buf);
+    default:
+        PR_ERR("Class not implemented: %d, dropped", query.qclass);
+        return -1;
+    }
 
-    memcpy(buf + 12, lqname + 1, *lqname);
-
-    len += *lqname;
-    buf[len++] = 0;
-    buf[len++] = 1;
-    buf[len++] = 0;
-    buf[len++] = 1;
-    p = buf + len;
-
-
-    len += sizeof(A_record);
-    memcpy(p, A_record, sizeof(A_record));
-
-    ndnsh = (struct dnshdr *) buf;
-    ndnsh->id = dnsh->id;
-
-    *((unsigned char *) ndnsh + 2) = 0x81;
-    *((unsigned char *) ndnsh + 3) = 0x80;
-    *((unsigned char *) ndnsh + 4) = 0;
-    *((unsigned char *) ndnsh + 5) = 1;
-    *((unsigned char *) ndnsh + 6) = 0;
-    *((unsigned char *) ndnsh + 7) = 1;
-    *((unsigned char *) ndnsh + 8) = 0;
-    *((unsigned char *) ndnsh + 9) = 0;
-    *((unsigned char *) ndnsh + 10) = 0;
-    *((unsigned char *) ndnsh + 11) = 0;
-
-    return len;
+    return -1;
 }
