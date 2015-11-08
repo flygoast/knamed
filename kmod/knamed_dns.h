@@ -139,11 +139,30 @@
 #define TYPE_DLV            32769   /* RFC 4431 */
 
 
+/*
+ *
+ *                                    1  1  1  1  1  1
+ *      0  1  2  3  4  5  6  7  8  9  0  1  2  3  4  5
+ *    +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+ *    |                      ID                       |
+ *    +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+ *    |QR|   Opcode  |AA|TC|RD|RA| Z|AD|CD|   RCODE   |
+ *    +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+ *    |                    QDCOUNT                    |
+ *    +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+ *    |                    ANCOUNT                    |
+ *    +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+ *    |                    NSCOUNT                    |
+ *    +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+ *    |                    ARCOUNT                    |
+ *    +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+ *
+ */
 struct dnshdr {
     unsigned  id:16;        /* query identification number */
 #if defined(__BIG_ENDIAN)
               /* fields in third byte */
-    unsigned  rd:1;         /* resposne flag */ 
+    unsigned  qr:1;         /* resposne flag */
     unsigned  opcode:4;     /* purpose of message */
     unsigned  aa:1;         /* authoritative answer */
     unsigned  tc:1;         /* truncated message */
