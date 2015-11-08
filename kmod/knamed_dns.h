@@ -195,4 +195,6 @@ struct dnshdr {
 };
 
 
-int process_dns_query(struct dnshdr *dnsh, int dnslen, unsigned char *buf);
+int process_query(struct dnshdr *dnsh, int dnslen, unsigned char *buf);
+int dns_init(void);
+void dns_cleanup(void);

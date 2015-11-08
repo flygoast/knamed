@@ -29,8 +29,41 @@
 
 #include <linux/kernel.h>
 #include <linux/string.h>
+#include <linux/list.h>
+#include <linux/slab.h>
 #include "knamed.h"
 #include "knamed_dns.h"
+
+
+#define MAX_LABEL_LEN       63
+#define MAX_DOMAIN_LEN      255
+
+#define MAX_RDATA_LEN       64
+#define MAX_RD_LENGTH       65535
+
+
+LIST_HEAD(dns_zones);
+
+
+struct dns_zone {
+    struct list_head    list;
+    uint8_t             len;
+    uint8_t             name[MAX_DOMAIN_LEN];
+    struct hlist_head  *records_table;
+};
+
+
+struct dns_query {
+    uint16_t   id;
+    uint16_t   qtype;
+    uint16_t   qclass;
+    uint8_t    len;                     /* length of FQDN, "www.example.com" */
+    uint8_t    name[MAX_DOMAIN_LEN];    /* buffer for FQDN */
+    uint8_t    qlen;                    /* length of domain name in packet */
+    uint8_t    offset;                  /* offset of domain name in packet */
+    int        plen;                    /* length of the packet */
+    uint8_t   *packet;
+};
 
 
 static uint8_t  A_record[] = {
@@ -71,24 +104,21 @@ static uint8_t  version_bind_response[] = {
 };
 
 
-static uint8_t  *version_bind_qname = (uint8_t *) version_bind_response
+/*
+static uint8_t  *version_bind_name = (uint8_t *) version_bind_response
                                       + sizeof(struct dnshdr);
 static int  version_bind_length = 14;
+*/
 
 
-struct dns_query {
-    uint16_t   id;
-    uint8_t    qname[256];
-    uint8_t    len;
-    uint16_t   qtype;
-    uint16_t   qclass;
-};
+static uint8_t  version_bind[] = "version.bind.";
+static uint8_t  version_server[] = "version.server.";
 
 
-static int parse_dns_query(struct dns_query *query, struct dnshdr *dnsh,
-    int dnslen);
+static int parse_query(struct dns_query *query);
 static int process_class_chaos(struct dns_query *query, uint8_t *buf);
-
+static int process_class_in(struct dns_query *query, uint8_t *buf);
+static struct dns_zone *find_zone(struct dns_query *query);
 
 
 static int
@@ -99,8 +129,8 @@ process_class_chaos(struct dns_query *query, uint8_t *buf)
         return -1;
     }
 
-    if (query->len == version_bind_length
-        && memcmp(query->qname, version_bind_qname, query->len) == 0)
+    if (query->len == sizeof(version_bind) - 1
+        && memcmp(query->name, version_bind, query->len) == 0)
     {
 
         *(uint16_t *) buf = query->id;
@@ -115,17 +145,58 @@ process_class_chaos(struct dns_query *query, uint8_t *buf)
 
 
 static int
+fill_rr(uint8_t *buf, int offset, uint16_t qtype, uint16_t qclass,
+    uint32_t ttl, uint16_t len, uint8_t *content)
+{
+    uint8_t  *p = buf;
+
+    *((uint16_t *) p) = htons(0xc000 | offset); /* compression label */
+    p += 2;
+    *((uint16_t *) p) = qtype;
+    p += 2;
+    *((uint16_t *) p) = qclass;
+    p += 2;
+    *((uint32_t *) p) = ttl;
+    p += 4;
+    *((uint16_t *) p) = htons(len);
+    p += 2;
+
+    memcpy(p, content, len);
+    p += len;
+
+    return p - buf;
+}
+
+
+static int
 process_class_in(struct dns_query *query, uint8_t *buf)
 {
-    int             len;
-    uint8_t        *p;
-    struct dnshdr  *ndnsh;
+    int               len;
+    uint8_t          *p;
+    struct dnshdr    *ndnsh;
+    struct dns_zone  *zone;
+    uint8_t           qlen;
+
+    zone = find_zone(query);
+    if (zone == NULL) {
+        return -1;
+    }
+
+    qlen = query->len - zone->len;
+
+    /*
+    if (qlen > 0) {
+
+    } else if (qlen == 0) {
+
+    }
+    */
 
     len = 12;
 
-    memcpy(buf + 12, query->qname, query->len);
+    memcpy(buf + 12, query->packet + query->offset, query->qlen);
 
-    len += query->len;
+    len += query->qlen;
     buf[len++] = 0;
     buf[len++] = 1;
     buf[len++] = 0;
@@ -154,26 +225,37 @@ process_class_in(struct dns_query *query, uint8_t *buf)
 
 
 static int
-parse_dns_query(struct dns_query *query, struct dnshdr *dnsh, int dnslen)
+parse_query(struct dns_query *query)
 {
-    int       len, datalen, pos;
-    uint8_t  *buf, *p;
+    int             len, datalen, pos, dnslen;
+    uint8_t        *buf, *p;
+    struct dnshdr  *dnsh;
+
+    dnsh = (struct dnshdr *) query->packet;
+    dnslen = query->plen;
 
     query->id = *(uint16_t *) dnsh;
 
     buf = (uint8_t *) dnsh + sizeof(struct dnshdr);
-    p = &query->qname[0];
+    p = &query->name[0];
     pos = 0;
 
     datalen = dnslen - sizeof(struct dnshdr);
 
-    while ((len = buf[pos]) != 0) {
-        *p++ = len;
-        pos++;
+    query->offset = sizeof(struct dnshdr);
 
+    while (1) {
+        len = buf[pos];
         if (len & 0xc0) {
             PR_ERR("Lable compression detected in query, dropped");
             return -1;
+        }
+
+        pos++;
+
+        if (len == 0) {
+            *p++ = '\0';
+            break;
         }
 
         if (pos + len >= datalen) {
@@ -181,31 +263,33 @@ parse_dns_query(struct dns_query *query, struct dnshdr *dnsh, int dnslen)
             return -1;
         }
 
-        if (pos + len > 254) {
+        if (pos + len > MAX_DOMAIN_LEN) {
             PR_ERR("Query domain name too long, dropped");
             return -1;
         }
 
-        /* copy qname */
         while (len--) {
             /* upper letter */
             if (buf[pos] > 0x40 && buf[pos] < 0x5B) {
-                *p++ = buf[pos++] | 0x20;
+                *p++ = buf[pos] | 0x20;
             } else {
-                *p++ = buf[pos++];
+                *p++ = buf[pos];
             }
+
+            pos++;
         }
+
+        *p++ = '.';
     }
 
-    *p++ = 0;
-    pos++;
-
     /* length of the lowercased name */
-    query->len = (uint8_t) pos;
+    query->len = (uint8_t) (p - query->name - 1);
+    query->qlen = (uint8_t) pos;
 
     if (pos + 4 > datalen) {
         PR_ERR("Length exhausted before parsing query type/class, dropped");
         return -1;
+
     } else {
         query->qtype = ntohs(*(uint16_t *) &buf[pos]);
         pos += 2;
@@ -217,19 +301,51 @@ parse_dns_query(struct dns_query *query, struct dnshdr *dnsh, int dnslen)
 }
 
 
+static void
+dump_query(struct dns_query *query)
+{
+    PR_INFO("Query Domain: %s", query->name);
+    PR_INFO("Class: %d", query->qclass);
+    PR_INFO("Type: %d", query->qtype);
+}
+
+
+static int
+answer_notimpl(struct dns_query *query, uint8_t *buf)
+{
+    struct dnshdr  *resp;
+
+    memcpy(buf, query->packet, query->plen);
+
+    resp = (struct dnshdr *) buf;
+    resp->qr = 1;
+    resp->aa = 0;
+    resp->tc = 0;
+    resp->unused = 0;
+    resp->rcode = RCODE_NOTIMP;
+
+    return query->plen;
+}
+
+
 int
-process_dns_query(struct dnshdr *dnsh, int dnslen, uint8_t *buf)
+process_query(struct dnshdr *dnsh, int dnslen, uint8_t *buf)
 {
     struct dns_query  query;
 
+    query.packet = (uint8_t *) dnsh;
+    query.plen = dnslen;
+
     if (dnsh->opcode != OPCODE_QUERY) {
-        PR_ERR("Only standard query supported, dropped");
+        PR_INFO("Only standard query supported");
+        return answer_notimpl(&query, buf);
+    }
+
+    if (parse_query(&query) < 0) {
         return -1;
     }
 
-    if (parse_dns_query(&query, dnsh, dnslen) < 0) {
-        return -1;
-    }
+    dump_query(&query);
 
     switch (query.qclass) {
     case CLASS_IN:
@@ -237,9 +353,90 @@ process_dns_query(struct dnshdr *dnsh, int dnslen, uint8_t *buf)
     case CLASS_CHAOS:
         return process_class_chaos(&query, buf);
     default:
-        PR_ERR("Class not implemented: %d, dropped", query.qclass);
-        return -1;
+        PR_ERR("Class %d not implemented", query.qclass);
+        return answer_notimpl(&query, buf);
     }
 
     return -1;
+}
+
+
+static struct dns_zone *
+find_zone(struct dns_query *query)
+{
+    struct dns_zone  *zone;
+    uint8_t          *p;
+
+    p = query->name;
+
+    list_for_each_entry(zone, &dns_zones, list) {
+        if (query->len > zone->len
+            && *(p + (query->len - zone->len - 1)) == '.'
+            && strncmp(p + query->len - zone->len, zone->name, zone->len) == 0)
+        {
+            PR_INFO("Found zone \"%s\" for query \"%s\"",
+                    zone->name, query->name);
+
+            return zone;
+
+        } else if (query->len == zone->len
+                   && strncmp(query->name, zone->name, zone->len) == 0)
+        {
+            PR_INFO("Found zone \"%s\" for query \"%s\"",
+                    zone->name, query->name);
+
+            return zone;
+        }
+    }
+
+    PR_INFO("No zone found for query \"%s\"", query->name);
+
+    return NULL;
+}
+
+
+static void
+dump_zones(void)
+{
+    struct dns_zone  *zone;
+
+    list_for_each_entry(zone, &dns_zones, list) {
+        PR_INFO("ZONE: %s", zone->name);
+    }
+}
+
+
+int
+dns_init(void)
+{
+    struct dns_zone  *zone;
+
+    zone = (struct dns_zone *) kmalloc(sizeof(struct dns_zone), GFP_KERNEL);
+    if (zone == NULL) {
+        return -ENOMEM;
+    }
+
+    memset(zone, 0, sizeof(struct dns_zone));
+
+    strcpy(zone->name, "example.com.");
+
+    zone->len = strlen("example.com.");
+
+    list_add(&zone->list, &dns_zones);
+
+    dump_zones();
+
+    return 0;
+}
+
+
+void
+dns_cleanup(void)
+{
+    struct dns_zone  *zone, *n;
+
+    list_for_each_entry_safe(zone, n, &dns_zones, list) {
+        list_del(&zone->list);
+        kfree(zone);
+    }
 }

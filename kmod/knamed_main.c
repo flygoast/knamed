@@ -152,7 +152,7 @@ static void process_skb(struct sk_buff *oskb)
                       + sizeof(struct iphdr)
                       + sizeof(struct udphdr));
 
-    len = process_dns_query(dnsh, dnslen, nskb->data);
+    len = process_query(dnsh, dnslen, nskb->data);
     PR_INFO("DNS response length: %d", len);
     if (len < 0) {
         kfree_skb(nskb);
@@ -220,6 +220,11 @@ static int __init knamed_init(void)
     struct file  *filp;
     int           ret;
 
+    PR_INFO("starting");
+    PR_INFO("Author: Gu Feng <flygoast@126.com>");
+    PR_INFO("Version: %s", KNAMED_VERSION);
+    PR_INFO("Repository: https://github.com/flygoast/knamed.git");
+
     filp = filp_open(KNAMED_CONF, O_RDONLY, 0);
     if (IS_ERR(filp)) {
         PR_INFO("conf file \"%s\" didn't existed, ignored", KNAMED_CONF);
@@ -241,9 +246,8 @@ init:
     knamed_procfs_init();
     knamed_sysctl_register();
 
-    PR_INFO("Author: Gu Feng <flygoast@126.com>");
-    PR_INFO("Version: %s", KNAMED_VERSION);
-    PR_INFO("Repository: https://github.com/flygoast/knamed.git");
+    dns_init();
+
     PR_INFO("started");
 
     return 0;
@@ -260,6 +264,8 @@ static void __exit knamed_exit(void)
 
     knamed_sysctl_unregister();
     knamed_procfs_release();
+
+    dns_cleanup();
 
     PR_INFO("removed");
 }
