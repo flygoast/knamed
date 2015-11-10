@@ -76,90 +76,135 @@ static uint8_t  A_record[] = {
 };
 
 
-/*
- * support version.bind:
- *  dig @127.0.0.1 version.bind TXT CHAOS
- */
-static uint8_t  version_bind_response[] = {
-    0x00, 0x00,         /* QUERY ID, should be replaced */
-    0x85, 0x00,
-    0x00, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00,
-
-    0x07, 'v', 'e', 'r', 's', 'i', 'o', 'n', 0x04, 'b', 'i', 'n', 'd', 0x00,
-    0x00, 0x10,
-    0x00, 0x03,
-
-    0xc0, 0x0c,
-    0x00, 0x10,
-    0x00, 0x03,
-    0x00, 0x00, 0x00, 0x00,
-    0x00, 0x09,
-    0x08,
-    'k', 'n', 'a', 'm', 'e', 'd', '/', '1',
-
-    0xc0, 0x0c,
-    0x00, 0x02,
-    0x00, 0x03,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xc0, 0x0c,
-};
-
-
-/*
-static uint8_t  *version_bind_name = (uint8_t *) version_bind_response
-                                      + sizeof(struct dnshdr);
-static int  version_bind_length = 14;
-*/
-
-
-static uint8_t  version_bind[] = "version.bind.";
+static uint8_t  id_server[] = "id.server.";
+static uint8_t  hostname_bind[] = "hostname.bind.";
 static uint8_t  version_server[] = "version.server.";
+static uint8_t  version_bind[] = "version.bind.";
 
 
 static int parse_query(struct dns_query *query);
 static int process_class_chaos(struct dns_query *query, uint8_t *buf);
 static int process_class_in(struct dns_query *query, uint8_t *buf);
 static struct dns_zone *find_zone(struct dns_query *query);
+static int answer_formerr(struct dns_query *query, uint8_t *buf);
+static int answer_notimpl(struct dns_query *query, uint8_t *buf);
+static int answer_refused(struct dns_query *query, uint8_t *buf);
+static int fill_rr_raw(uint8_t *buf, int offset, uint16_t qtype,
+    uint16_t qclass, uint32_t ttl,  uint16_t len, uint8_t *raw);
+static int fill_rr_str(uint8_t *buf, int offset, uint16_t qtype,
+    uint16_t qclass, uint32_t ttl, uint16_t len, uint8_t *content);
 
 
 static int
 process_class_chaos(struct dns_query *query, uint8_t *buf)
 {
-    if (query->qtype != TYPE_TXT) {
-        PR_INFO("Only query version.bind of CHAOS TXT implemented");
-        return -1;
+    uint8_t        *p = buf;
+    struct dnshdr  *resp;
+
+    if (query->qtype != TYPE_TXT && query->qtype != TYPE_ANY) {
+        PR_INFO("CHAOS type %d not implemented", query->qtype);
+        return answer_notimpl(query, buf);
     }
 
-    if (query->len == sizeof(version_bind) - 1
-        && memcmp(query->name, version_bind, query->len) == 0)
+    if ((query->len == sizeof(id_server) - 1
+         && memcmp(query->name, id_server, query->len) == 0)
+        || (query->len == sizeof(hostname_bind) - 1
+            && memcmp(query->name, hostname_bind, query->len) == 0))
     {
+        memcpy(p, query->packet, sizeof(struct dnshdr) + query->qlen + 2 + 2);
+        p += sizeof(struct dnshdr) + query->qlen + 2 + 2;
 
-        *(uint16_t *) buf = query->id;
-        memcpy(buf + 2, version_bind_response + 2,
-               sizeof(version_bind_response) - 2);
-        return sizeof(version_bind_response);
+        p += fill_rr_str(p, sizeof(struct dnshdr), TYPE_TXT, CLASS_CHAOS,
+                         sysctl_knamed_ttl, 8, "flygoast");
+
+        resp = (struct dnshdr *) buf;
+        resp->qr = 1;
+        resp->aa = 0;
+        resp->tc = 0;
+        resp->unused = 0;
+        resp->rcode = RCODE_NOERROR;
+
+        resp->qdcount = htons(1);
+        resp->ancount = htons(1);
+        resp->nscount = 0;
+        resp->arcount = 0;
+
+        return p - buf;
+    }
+
+    if ((query->len == sizeof(version_server) - 1
+         && memcmp(query->name, version_server, query->len) == 0)
+        || (query->len == sizeof(version_bind) - 1
+            && memcmp(query->name, version_bind, query->len) == 0))
+    {
+        memcpy(p, query->packet, sizeof(struct dnshdr) + query->qlen + 2 + 2);
+        p += sizeof(struct dnshdr) + query->qlen + 2 + 2;
+
+        p += fill_rr_str(p, sizeof(struct dnshdr), TYPE_TXT, CLASS_CHAOS,
+                         sysctl_knamed_ttl, 10, "knamed/0.1");
+
+        resp = (struct dnshdr *) buf;
+        resp->qr = 1;
+        resp->aa = 0;
+        resp->tc = 0;
+        resp->unused = 0;
+        resp->rcode = RCODE_NOERROR;
+
+        resp->qdcount = htons(1);
+        resp->ancount = htons(1);
+        resp->nscount = 0;
+        resp->arcount = 0;
+
+        return p - buf;
     }
 
     PR_INFO("Only query version.bind of CHAOS TXT implemented");
-    return -1;
+    return answer_notimpl(query, buf);
 }
 
 
 static int
-fill_rr(uint8_t *buf, int offset, uint16_t qtype, uint16_t qclass,
+fill_rr_raw(uint8_t *buf, int offset, uint16_t qtype, uint16_t qclass,
     uint32_t ttl, uint16_t len, uint8_t *content)
 {
     uint8_t  *p = buf;
 
     *((uint16_t *) p) = htons(0xc000 | offset); /* compression label */
     p += 2;
-    *((uint16_t *) p) = qtype;
+    *((uint16_t *) p) = htons(qtype);
     p += 2;
-    *((uint16_t *) p) = qclass;
+    *((uint16_t *) p) = htons(qclass);
     p += 2;
-    *((uint32_t *) p) = ttl;
+    *((uint32_t *) p) = htonl(ttl);
     p += 4;
     *((uint16_t *) p) = htons(len);
     p += 2;
+
+    memcpy(p, content, len);
+    p += len;
+
+    return p - buf;
+}
+
+
+static int
+fill_rr_str(uint8_t *buf, int offset, uint16_t qtype, uint16_t qclass,
+    uint32_t ttl, uint16_t len, uint8_t *content)
+{
+    uint8_t  *p = buf;
+
+    *((uint16_t *) p) = htons(0xc000 | offset); /* compression label */
+    p += 2;
+    *((uint16_t *) p) = htons(qtype);
+    p += 2;
+    *((uint16_t *) p) = htons(qclass);
+    p += 2;
+    *((uint32_t *) p) = htonl(ttl);
+    p += 4;
+    *((uint16_t *) p) = htons(len + 1);
+    p += 2;
+
+    *p++ = (uint8_t) len;
 
     memcpy(p, content, len);
     p += len;
@@ -227,16 +272,12 @@ process_class_in(struct dns_query *query, uint8_t *buf)
 static int
 parse_query(struct dns_query *query)
 {
-    int             len, datalen, pos, dnslen;
-    uint8_t        *buf, *p;
-    struct dnshdr  *dnsh;
+    int       len, datalen, pos, dnslen;
+    uint8_t  *buf, *p;
 
-    dnsh = (struct dnshdr *) query->packet;
     dnslen = query->plen;
 
-    query->id = *(uint16_t *) dnsh;
-
-    buf = (uint8_t *) dnsh + sizeof(struct dnshdr);
+    buf = query->packet + sizeof(struct dnshdr);
     p = &query->name[0];
     pos = 0;
 
@@ -247,7 +288,7 @@ parse_query(struct dns_query *query)
     while (1) {
         len = buf[pos];
         if (len & 0xc0) {
-            PR_ERR("Lable compression detected in query, dropped");
+            PR_ERR("Lable compression detected in query");
             return -1;
         }
 
@@ -259,12 +300,12 @@ parse_query(struct dns_query *query)
         }
 
         if (pos + len >= datalen) {
-            PR_ERR("Query name truncated, dropped");
+            PR_ERR("Query name truncated");
             return -1;
         }
 
         if (pos + len > MAX_DOMAIN_LEN) {
-            PR_ERR("Query domain name too long, dropped");
+            PR_ERR("Query domain name too long");
             return -1;
         }
 
@@ -287,7 +328,7 @@ parse_query(struct dns_query *query)
     query->qlen = (uint8_t) pos;
 
     if (pos + 4 > datalen) {
-        PR_ERR("Length exhausted before parsing query type/class, dropped");
+        PR_ERR("Length exhausted before parsing query type/class");
         return -1;
 
     } else {
@@ -301,12 +342,26 @@ parse_query(struct dns_query *query)
 }
 
 
-static void
-dump_query(struct dns_query *query)
+static int
+answer_formerr(struct dns_query *query, uint8_t *buf)
 {
-    PR_INFO("Query Domain: %s", query->name);
-    PR_INFO("Class: %d", query->qclass);
-    PR_INFO("Type: %d", query->qtype);
+    struct dnshdr  *resp;
+
+    memcpy(buf, query->packet, sizeof(struct dns_query));
+
+    resp = (struct dnshdr *) buf;
+    resp->qr = 1;
+    resp->aa = 0;
+    resp->tc = 0;
+    resp->unused = 0;
+    resp->rcode = RCODE_FORMERR;
+
+    resp->qdcount = 0;
+    resp->ancount = 0;
+    resp->nscount = 0;
+    resp->arcount = 0;
+
+    return sizeof(struct dnshdr);
 }
 
 
@@ -328,6 +383,25 @@ answer_notimpl(struct dns_query *query, uint8_t *buf)
 }
 
 
+static int
+answer_refused(struct dns_query *query, uint8_t *buf)
+{
+    struct dnshdr  *resp;
+
+    memcpy(buf, query->packet, query->plen);
+
+    resp = (struct dnshdr *) buf;
+    resp->qr = 1;
+    resp->aa = 0;
+    resp->tc = 0;
+    resp->unused = 0;
+    resp->rcode = RCODE_REFUSED;
+
+    return query->plen;
+}
+
+
+
 int
 process_query(struct dnshdr *dnsh, int dnslen, uint8_t *buf)
 {
@@ -335,6 +409,7 @@ process_query(struct dnshdr *dnsh, int dnslen, uint8_t *buf)
 
     query.packet = (uint8_t *) dnsh;
     query.plen = dnslen;
+    query.id = *(uint16_t *) dnsh;
 
     if (dnsh->opcode != OPCODE_QUERY) {
         PR_INFO("Only standard query supported");
@@ -342,10 +417,8 @@ process_query(struct dnshdr *dnsh, int dnslen, uint8_t *buf)
     }
 
     if (parse_query(&query) < 0) {
-        return -1;
+        return answer_formerr(&query, buf);
     }
-
-    dump_query(&query);
 
     switch (query.qclass) {
     case CLASS_IN:
