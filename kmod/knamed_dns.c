@@ -455,8 +455,10 @@ process_query(struct dnshdr *dnsh, int dnslen, uint8_t *buf)
     switch (query.qclass) {
     case CLASS_IN:
         return process_class_in(&query, buf);
+
     case CLASS_CHAOS:
         return process_class_chaos(&query, buf);
+
     default:
         PR_ERR("Class %d not implemented", query.qclass);
         return answer_notimpl(&query, buf);
