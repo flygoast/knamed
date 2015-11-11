@@ -33,7 +33,8 @@
 
 
 int sysctl_knamed_port = KNAMED_PORT;
-int sysctl_knamed_ttl = KNAMED_TTL;
+int sysctl_knamed_default_ttl = KNAMED_DEF_TTL;
+int sysctl_knamed_hide_version = 0;
 
 
 static struct ctl_table_header  *sysctl_header;
@@ -41,8 +42,8 @@ static struct ctl_table_header  *sysctl_header;
 
 static int knamed_port_sysctl(ctl_table *table, int write, void __user *buffer,
     size_t *lenp, loff_t *ppos);
-static int knamed_ttl_sysctl(ctl_table *table, int write, void __user *buffer,
-    size_t *lenp, loff_t *ppos);
+static int knamed_default_ttl_sysctl(ctl_table *table, int write,
+    void __user *buffer, size_t *lenp, loff_t *ppos);
 
 
 /*
@@ -58,11 +59,19 @@ static ctl_table  knamed_vars[] = {
     },
 
     {
-        .procname     = "ttl",
-        .data         = &sysctl_knamed_ttl,
+        .procname     = "default_ttl",
+        .data         = &sysctl_knamed_default_ttl,
         .maxlen       = sizeof(int),
         .mode         = 0644,
-        .proc_handler = knamed_ttl_sysctl,
+        .proc_handler = knamed_default_ttl_sysctl,
+    },
+
+    {
+        .procname     = "hide_version",
+        .data         = &sysctl_knamed_hide_version,
+        .maxlen       = sizeof(int),
+        .mode         = 0644,
+        .proc_handler = proc_dointvec,
     },
 
     {
@@ -88,11 +97,8 @@ const static struct ctl_path knamed_ctl_path[] = {
 
 
 static int
-knamed_port_sysctl(ctl_table *table,
-                   int write,
-                   void __user *buffer,
-                   size_t *lenp,
-                   loff_t *ppos)
+knamed_port_sysctl(ctl_table *table, int write, void __user *buffer,
+    size_t *lenp, loff_t *ppos)
 {
     int  *valp = table->data;
     int   val = *valp;
@@ -114,11 +120,8 @@ knamed_port_sysctl(ctl_table *table,
 
 
 static int
-knamed_ttl_sysctl(ctl_table *table,
-                  int write,
-                  void __user *buffer,
-                  size_t *lenp,
-                  loff_t *ppos)
+knamed_default_ttl_sysctl(ctl_table *table, int write, void __user *buffer,
+    size_t *lenp, loff_t *ppos)
 {
     int  *valp = table->data;
     int   val = *valp;

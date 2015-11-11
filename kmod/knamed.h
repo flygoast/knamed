@@ -64,15 +64,17 @@
 
 
 #define KNAMED_VERSION   "0.0.1"
+#define KNAMED_TOKEN     "knamed/" KNAMED_VERSION
 #define KNAMED_CONF      "/etc/knamed/knamed.conf"
 
 
 #define KNAMED_PORT      53
-#define KNAMED_TTL       60
+#define KNAMED_DEF_TTL   60
 
 
 extern int sysctl_knamed_port;
-extern int sysctl_knamed_ttl;
+extern int sysctl_knamed_default_ttl;
+extern int sysctl_knamed_hide_version;
 
 
 void knamed_procfs_init(void);
