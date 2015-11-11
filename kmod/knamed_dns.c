@@ -54,7 +54,7 @@ struct dns_query {
     uint16_t   id;
     uint16_t   qtype;
     uint16_t   qclass;
-    uint8_t    len;                     /* length of FQDN, "www.example.com" */
+    uint8_t    len;                     /* length of FQDN, "www.example.com." */
     uint8_t    name[MAX_DOMAIN_LEN];    /* buffer for FQDN */
     uint8_t    qlen;                    /* length of domain name in packet */
     int        plen;                    /* length of the packet */
