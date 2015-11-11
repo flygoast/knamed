@@ -142,7 +142,7 @@ process_class_chaos(struct dns_query *query, uint8_t *buf)
 
         resp = (struct dnshdr *) buf;
         resp->qr = 1;
-        resp->aa = 0;
+        resp->aa = 1;
         resp->tc = 0;
         resp->unused = 0;
         resp->rcode = RCODE_NOERROR;
@@ -174,7 +174,7 @@ process_class_chaos(struct dns_query *query, uint8_t *buf)
 
         resp = (struct dnshdr *) buf;
         resp->qr = 1;
-        resp->aa = 0;
+        resp->aa = 1;
         resp->tc = 0;
         resp->unused = 0;
         resp->rcode = RCODE_NOERROR;
@@ -285,7 +285,7 @@ process_class_in(struct dns_query *query, uint8_t *buf)
 
     resp = (struct dnshdr *) buf;
     resp->qr = 1;
-    resp->aa = 0;
+    resp->aa = 1;
     resp->tc = 0;
     resp->unused = 0;
     resp->rcode = RCODE_NOERROR;
