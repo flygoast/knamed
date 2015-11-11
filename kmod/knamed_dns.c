@@ -255,7 +255,7 @@ process_class_in(struct dns_query *query, uint8_t *buf)
 
     zone = find_zone(query);
     if (zone == NULL) {
-        return -1;
+        return answer_refused(query, buf);
     }
 
     qlen = query->len - zone->len;
