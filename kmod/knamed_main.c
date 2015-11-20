@@ -152,7 +152,7 @@ static void process_skb(struct sk_buff *oskb)
                       + sizeof(struct iphdr)
                       + sizeof(struct udphdr));
 
-    len = process_query(dnsh, dnslen, nskb->data);
+    len = process_query(oiph, oudph, dnsh, dnslen, nskb->data);
     PR_INFO("DNS response length: %d", len);
     if (len < 0) {
         kfree_skb(nskb);

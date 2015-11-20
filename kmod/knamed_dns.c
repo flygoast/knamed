@@ -33,19 +33,38 @@
 #include <linux/slab.h>
 #include "knamed.h"
 #include "knamed_dns.h"
+#include "knamed_acl.h"
+#include "knamed_util.h"
 
 
 #define MAX_LABEL_LEN       63
 #define MAX_DOMAIN_LEN      255
 
 
+#define RESP_SET(resp, an, r)               \
+    do {                                    \
+        (resp)->qr = 1;                     \
+        (resp)->aa = 1;                     \
+        (resp)->tc = 0;                     \
+        (resp)->unused = 0;                 \
+        (resp)->rcode = r;                  \
+        (resp)->qdcount = htons(1);         \
+        (resp)->ancount = htons(an);        \
+        (resp)->nscount = 0;                \
+        (resp)->arcount = 0;                \
+    } while (0)
+
+
 LIST_HEAD(dns_zones);
+struct acl_table  *acl_tbl;
 
 
 struct dns_zone {
     struct list_head    list;
     uint8_t             len;
     uint8_t             name[MAX_DOMAIN_LEN];
+    uint8_t             peer_len;
+    uint8_t             peer[MAX_LABEL_LEN];
     struct hlist_head  *records_table;
 };
 
@@ -54,6 +73,8 @@ struct dns_query {
     uint16_t   id;
     uint16_t   qtype;
     uint16_t   qclass;
+    uint16_t   sport;
+    uint32_t   saddr;
     uint8_t    len;                     /* length of FQDN, "www.example.com." */
     uint8_t    name[MAX_DOMAIN_LEN];    /* buffer for FQDN */
     uint8_t    qlen;                    /* length of domain name in packet */
@@ -75,6 +96,7 @@ static int process_class_in(struct dns_query *query, uint8_t *buf);
 static int answer_formerr(struct dns_query *query, uint8_t *buf);
 static int answer_notimpl(struct dns_query *query, uint8_t *buf);
 static int answer_refused(struct dns_query *query, uint8_t *buf);
+static int answer_peer(struct dns_query *query, uint8_t *buf);
 static int fill_rr_raw(uint8_t *buf, int offset, uint16_t qtype,
     uint16_t qclass, uint32_t ttl,  uint16_t len, uint8_t *raw);
 static int fill_rr_str(uint8_t *buf, int offset, uint16_t qtype,
@@ -141,16 +163,7 @@ process_class_chaos(struct dns_query *query, uint8_t *buf)
                          sysctl_knamed_default_ttl, 8, "flygoast");
 
         resp = (struct dnshdr *) buf;
-        resp->qr = 1;
-        resp->aa = 1;
-        resp->tc = 0;
-        resp->unused = 0;
-        resp->rcode = RCODE_NOERROR;
-
-        resp->qdcount = htons(1);
-        resp->ancount = htons(1);
-        resp->nscount = 0;
-        resp->arcount = 0;
+        RESP_SET(resp, 1, RCODE_NOERROR);
 
         return p - buf;
     }
@@ -173,16 +186,7 @@ process_class_chaos(struct dns_query *query, uint8_t *buf)
                          KNAMED_TOKEN);
 
         resp = (struct dnshdr *) buf;
-        resp->qr = 1;
-        resp->aa = 1;
-        resp->tc = 0;
-        resp->unused = 0;
-        resp->rcode = RCODE_NOERROR;
-
-        resp->qdcount = htons(1);
-        resp->ancount = htons(1);
-        resp->nscount = 0;
-        resp->arcount = 0;
+        RESP_SET(resp, 1, RCODE_NOERROR);
 
         return p - buf;
     }
@@ -249,24 +253,45 @@ process_class_in(struct dns_query *query, uint8_t *buf)
     struct dns_zone  *zone;
     uint8_t           qlen;
     uint32_t          address;
+
     //////////////////
-    uint8_t           temp[128];
-    int               len;
+    uint8_t            temp[128];
+    int                len;
 
     zone = find_zone(query);
     if (zone == NULL) {
         return answer_refused(query, buf);
     }
 
+    /* qlen contained '.' at the label end */
     qlen = query->len - zone->len;
 
-    /*
     if (qlen > 0) {
+        /* used to got the IP of Local DNS */
+        if (zone->peer_len != 0
+            && query->qtype == TYPE_A
+            && qlen - 1 == zone->peer_len
+            && strncmp(query->name, zone->peer, qlen - 1) == 0)
+        {
+            return answer_peer(query, buf);
+        }
+
+        switch (query->qtype) {
+        case TYPE_A:
+            break;
+
+        case TYPE_CNAME:
+            break;
+
+        case TYPE_TXT:
+            break;
+        }
+
+        /* TODO */
 
     } else if (qlen == 0) {
-
+        /* TODO */
     }
-    */
 
     memcpy(buf, query->packet, sizeof(struct dnshdr) + query->qlen + 2 + 2);
     p = buf + sizeof(struct dnshdr) + query->qlen + 2 + 2;
@@ -284,16 +309,7 @@ process_class_in(struct dns_query *query, uint8_t *buf)
                      (uint8_t *) &address);
 
     resp = (struct dnshdr *) buf;
-    resp->qr = 1;
-    resp->aa = 1;
-    resp->tc = 0;
-    resp->unused = 0;
-    resp->rcode = RCODE_NOERROR;
-
-    resp->qdcount = htons(1);
-    resp->ancount = htons(2);
-    resp->nscount = 0;
-    resp->arcount = 0;
+    RESP_SET(resp, 2, RCODE_NOERROR);
 
     return p - buf;
 }
@@ -379,7 +395,7 @@ answer_formerr(struct dns_query *query, uint8_t *buf)
 {
     struct dnshdr  *resp;
 
-    memcpy(buf, query->packet, sizeof(struct dns_query));
+    memcpy(buf, query->packet, query->plen);
 
     resp = (struct dnshdr *) buf;
     resp->qr = 1;
@@ -433,11 +449,50 @@ answer_refused(struct dns_query *query, uint8_t *buf)
 }
 
 
+static int
+answer_peer(struct dns_query *query, uint8_t *buf)
+{
+    uint32_t        address;
+    struct tm       tm;
+    uint8_t        *p;
+    struct dnshdr  *resp;
+
+    get_local_time(&tm);
+
+    address = htonl(((tm.tm_mon + 1) << 24)
+                    + (tm.tm_mday << 16)
+                    + (tm.tm_hour << 8)
+                    + tm.tm_min);
+
+    memcpy(buf, query->packet,
+           sizeof(struct dnshdr) + query->qlen + 2 + 2);
+    p = buf + sizeof(struct dnshdr) + query->qlen + 2 + 2;
+
+    p += fill_rr_raw(p, sizeof(struct dnshdr),
+                     TYPE_A, CLASS_IN,
+                     (uint32_t) sysctl_knamed_default_ttl, 4,
+                     (uint8_t *) &query->saddr);
+
+    p += fill_rr_raw(p, sizeof(struct dnshdr),
+                     TYPE_A, CLASS_IN,
+                     (uint32_t) sysctl_knamed_default_ttl, 4,
+                     (uint8_t *) &address);
+
+    resp = (struct dnshdr *) buf;
+    RESP_SET(resp, 2, RCODE_NOERROR);
+
+    return p - buf;
+}
+
 
 int
-process_query(struct dnshdr *dnsh, int dnslen, uint8_t *buf)
+process_query(struct iphdr *iph, struct udphdr *udph, struct dnshdr *dnsh,
+    int dnslen, uint8_t *buf)
 {
-    struct dns_query  query;
+    struct dns_query   query;
+
+    query.saddr = iph->saddr;
+    query.sport = udph->source;
 
     query.packet = (uint8_t *) dnsh;
     query.plen = dnslen;
@@ -526,12 +581,25 @@ dns_init(void)
     memset(zone, 0, sizeof(struct dns_zone));
 
     strcpy(zone->name, "example.com.");
-
     zone->len = strlen("example.com.");
+
+    strcpy(zone->peer, "peer");
+    zone->peer_len = strlen("peer");
 
     list_add(&zone->list, &dns_zones);
 
     dump_zones();
+
+    acl_tbl = acl_create();
+    if (acl_tbl == NULL) {
+        return -ENOMEM;
+    }
+
+    if (acl_add(acl_tbl, 0x0a050000, 16, "abc") != 0) {
+        return -1;
+    }
+
+    acl_dump(acl_tbl);
 
     return 0;
 }
@@ -546,4 +614,6 @@ dns_cleanup(void)
         list_del(&zone->list);
         kfree(zone);
     }
+
+    acl_destroy(acl_tbl, NULL);
 }

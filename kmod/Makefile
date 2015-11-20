@@ -8,7 +8,9 @@ KDIR := /usr/src/kernels/2.6.32-431.el6.x86_64/
 knamed-objs := knamed_main.o   \
                knamed_procfs.o \
                knamed_sysctl.o \
-			   knamed_dns.o
+               knamed_acl.o    \
+               knamed_util.o   \
+               knamed_dns.o
 
 all:
 	$(MAKE) -C $(KDIR) M=$(PWD) modules

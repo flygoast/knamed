@@ -28,6 +28,8 @@
 
 
 #include <asm/byteorder.h>
+#include <linux/ip.h>
+#include <linux/udp.h>
 
 
 #define MAX_DNS_PACKET_LEN      512
@@ -195,6 +197,7 @@ struct dnshdr {
 };
 
 
-int process_query(struct dnshdr *dnsh, int dnslen, unsigned char *buf);
+int process_query(struct iphdr *iph, struct udphdr *udph, struct dnshdr *dnsh,
+    int dnslen, uint8_t *buf);
 int dns_init(void);
 void dns_cleanup(void);
