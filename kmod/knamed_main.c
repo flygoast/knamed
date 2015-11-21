@@ -125,21 +125,6 @@ static void process_skb(struct sk_buff *oskb)
 
     dnsh = (struct dnshdr *) ((unsigned char *) oudph + sizeof(struct udphdr));
 
-    if (dnsh->qr) {
-        PR_ERR("QR set in query, dropped");
-        return;
-    }
-
-    if (dnsh->tc) {
-        PR_ERR("TC set in query, dropped");
-        return;
-    }
-
-    if (ntohs(dnsh->qdcount) != 1) {
-        PR_ERR("QDCOUNT is not 1: %d, dropped", dnsh->qdcount);
-        return;
-    }
-
     ulen = sizeof(struct udphdr) + MAX_DNS_PACKET_LEN;
 
     nskb = alloc_skb(LL_MAX_HEADER + sizeof(struct iphdr) + ulen, GFP_ATOMIC);
@@ -153,7 +138,6 @@ static void process_skb(struct sk_buff *oskb)
                       + sizeof(struct udphdr));
 
     len = process_query(oiph, oudph, dnsh, dnslen, nskb->data);
-    PR_INFO("DNS response length: %d", len);
     if (len < 0) {
         kfree_skb(nskb);
 

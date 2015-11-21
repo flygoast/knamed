@@ -90,6 +90,7 @@ static uint8_t  version_bind[]   = "version.bind.";
 
 
 static struct dns_zone *find_zone(struct dns_query *query);
+static int check_query(struct dns_query *query, uint8_t *buf);
 static int parse_query(struct dns_query *query);
 static int process_class_chaos(struct dns_query *query, uint8_t *buf);
 static int process_class_in(struct dns_query *query, uint8_t *buf);
@@ -395,7 +396,7 @@ answer_formerr(struct dns_query *query, uint8_t *buf)
 {
     struct dnshdr  *resp;
 
-    memcpy(buf, query->packet, query->plen);
+    memcpy(buf, query->packet, sizeof(struct dnshdr));
 
     resp = (struct dnshdr *) buf;
     resp->qr = 1;
@@ -485,10 +486,36 @@ answer_peer(struct dns_query *query, uint8_t *buf)
 }
 
 
+static int
+check_query(struct dns_query *query, uint8_t *buf)
+{
+    struct dnshdr *dnsh = (struct dnshdr *) query->packet;
+
+    if (dnsh->qr || dnsh->tc) {
+        return answer_formerr(query, buf);
+    }
+
+    if (dnsh->opcode != OPCODE_QUERY) {
+        return answer_notimpl(query, buf);
+    }
+
+    if (ntohs(dnsh->qdcount) != 1
+        || ntohs(dnsh->ancount) != 0
+        || ntohs(dnsh->nscount) != 0
+        || ntohs(dnsh->arcount) != 0)
+    {
+        return answer_formerr(query, buf);
+    }
+
+    return 0;
+}
+
+
 int
 process_query(struct iphdr *iph, struct udphdr *udph, struct dnshdr *dnsh,
     int dnslen, uint8_t *buf)
 {
+    int                ret;
     struct dns_query   query;
 
     query.saddr = iph->saddr;
@@ -498,9 +525,8 @@ process_query(struct iphdr *iph, struct udphdr *udph, struct dnshdr *dnsh,
     query.plen = dnslen;
     query.id = *(uint16_t *) dnsh;
 
-    if (dnsh->opcode != OPCODE_QUERY) {
-        PR_INFO("Only standard query supported");
-        return answer_notimpl(&query, buf);
+    if ((ret = check_query(&query, buf)) != 0) {
+        return ret;
     }
 
     if (parse_query(&query) < 0) {
