@@ -471,12 +471,12 @@ answer_peer(struct dns_query *query, uint8_t *buf)
 
     p += fill_rr_raw(p, sizeof(struct dnshdr),
                      TYPE_A, CLASS_IN,
-                     (uint32_t) sysctl_knamed_default_ttl, 4,
+                     (uint32_t) 0, 4,
                      (uint8_t *) &query->saddr);
 
     p += fill_rr_raw(p, sizeof(struct dnshdr),
                      TYPE_A, CLASS_IN,
-                     (uint32_t) sysctl_knamed_default_ttl, 4,
+                     (uint32_t) 0, 4,
                      (uint8_t *) &address);
 
     resp = (struct dnshdr *) buf;
