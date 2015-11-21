@@ -45,7 +45,7 @@
 
 /* possible RCODE values */
 #define RCODE_NOERROR       0   /* no error condition */
-#define RCODE_FORMERR       1   /* fromat error */
+#define RCODE_FORMERR       1   /* format error */
 #define RCODE_SERVFAIL      2   /* server failure */
 #define RCODE_NXDOMAIN      3   /* name error */
 #define RCODE_NOTIMP        4   /* not implemented */
