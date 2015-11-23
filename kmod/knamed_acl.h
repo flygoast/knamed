@@ -27,6 +27,10 @@
  */
 
 
+#ifndef __KNAMED_ACL_H_INCLUDED__
+#define __KNAMED_ACL_H_INCLUDED__
+
+
 #define HASH_BUCKET_SIZE    256
 
 
@@ -52,3 +56,6 @@ int acl_add(struct acl_table *acl, uint32_t addr, int mask, void *value);
 struct acl_table *acl_create(void);
 void acl_destroy(struct acl_table *acl, void (*value_free)(void *value));
 void acl_dump(struct acl_table *acl);
+
+
+#endif /* __KNAMED_ACL_H_INCLUDED__ */

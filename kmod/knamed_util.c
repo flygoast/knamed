@@ -41,3 +41,21 @@ get_local_time(struct tm *tm)
 
     time_to_tm(lt, 0, tm);
 }
+
+
+uint32_t
+bkdr_hash(uint8_t *val, int len)
+{
+    uint32_t   seed, hash;
+    uint8_t   *last;
+
+    seed = 131;
+    hash = 0;
+    last = val + len;
+
+    while (val < last) {
+        hash = hash * seed + (*val++);
+    }
+
+    return hash;
+}

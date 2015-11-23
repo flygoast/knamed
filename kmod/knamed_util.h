@@ -27,7 +27,15 @@
  */
 
 
+#ifndef __KNAMED_UTIL_H_INCLUDED__
+#define __KNAMED_UTIL_H_INCLUDED__
+
+
 #include <linux/time.h>
 
 
 void get_local_time(struct tm *tm);
+uint32_t bkdr_hash(uint8_t *val, int len);
+
+
+#endif /* __KNAMED_UTIL_H_INCLUDED__ */

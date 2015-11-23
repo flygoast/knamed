@@ -27,11 +27,17 @@
  */
 
 
+#ifndef __KNAMED_DNS_H_INCLUDED__
+#define __KNAMED_DNS_H_INCLUDED__
+
+
 #include <asm/byteorder.h>
 #include <linux/ip.h>
 #include <linux/udp.h>
 
 
+#define MAX_LABEL_LEN           63
+#define MAX_DOMAIN_LEN          255
 #define MAX_DNS_PACKET_LEN      512
 
 
@@ -197,7 +203,24 @@ struct dnshdr {
 };
 
 
+struct dns_query {
+    uint16_t   id;
+    uint16_t   qtype;
+    uint16_t   qclass;
+    uint16_t   sport;
+    uint32_t   saddr;
+    uint8_t    len;                     /* length of FQDN, "www.example.com." */
+    uint8_t    name[MAX_DOMAIN_LEN];    /* buffer for FQDN */
+    uint8_t    qlen;                    /* length of domain name in packet */
+    int        plen;                    /* length of the packet */
+    uint8_t   *packet;
+};
+
+
 int process_query(struct iphdr *iph, struct udphdr *udph, struct dnshdr *dnsh,
     int dnslen, uint8_t *buf);
 int dns_init(void);
 void dns_cleanup(void);
+
+
+#endif /* __KNAMED_DNS_H_INCLUDED__ */

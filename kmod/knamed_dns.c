@@ -34,11 +34,8 @@
 #include "knamed.h"
 #include "knamed_dns.h"
 #include "knamed_acl.h"
+#include "knamed_zone.h"
 #include "knamed_util.h"
-
-
-#define MAX_LABEL_LEN       63
-#define MAX_DOMAIN_LEN      255
 
 
 #define RESP_SET(resp, an, r)               \
@@ -55,32 +52,16 @@
     } while (0)
 
 
-LIST_HEAD(dns_zones);
 struct acl_table  *acl_tbl;
 
 
-struct dns_zone {
-    struct list_head    list;
-    uint8_t             len;
-    uint8_t             name[MAX_DOMAIN_LEN];
-    uint8_t             peer_len;
-    uint8_t             peer[MAX_LABEL_LEN];
-    struct hlist_head  *records_table;
+struct region_ids {
+    int  count;
+    int  ids[0];
 };
 
 
-struct dns_query {
-    uint16_t   id;
-    uint16_t   qtype;
-    uint16_t   qclass;
-    uint16_t   sport;
-    uint32_t   saddr;
-    uint8_t    len;                     /* length of FQDN, "www.example.com." */
-    uint8_t    name[MAX_DOMAIN_LEN];    /* buffer for FQDN */
-    uint8_t    qlen;                    /* length of domain name in packet */
-    int        plen;                    /* length of the packet */
-    uint8_t   *packet;
-};
+struct region_ids  *g_ids;
 
 
 static uint8_t  id_server[]      = "id.server.";
@@ -89,7 +70,6 @@ static uint8_t  version_server[] = "version.server.";
 static uint8_t  version_bind[]   = "version.bind.";
 
 
-static struct dns_zone *find_zone(struct dns_query *query);
 static int check_query(struct dns_query *query, uint8_t *buf);
 static int parse_query(struct dns_query *query);
 static int process_class_chaos(struct dns_query *query, uint8_t *buf);
@@ -97,48 +77,22 @@ static int process_class_in(struct dns_query *query, uint8_t *buf);
 static int answer_formerr(struct dns_query *query, uint8_t *buf);
 static int answer_notimpl(struct dns_query *query, uint8_t *buf);
 static int answer_refused(struct dns_query *query, uint8_t *buf);
+static int answer_nxdomain(struct dns_query *query, uint8_t *buf);
+static int answer_noerror(struct dns_query *query, uint8_t *buf);
 static int answer_peer(struct dns_query *query, uint8_t *buf);
+static int answer_A(struct dns_query *query, uint8_t *buf,
+    struct dns_records *rs);
+static int answer_TXT(struct dns_query *query, uint8_t *buf,
+    struct dns_records *rs);
+static int answer_NS(struct dns_query *query, uint8_t *buf,
+    struct dns_records *rs);
+static int answer_CNAME(struct dns_query *query, uint8_t *buf,
+    struct dns_records *rs);
+
 static int fill_rr_raw(uint8_t *buf, int offset, uint16_t qtype,
     uint16_t qclass, uint32_t ttl,  uint16_t len, uint8_t *raw);
 static int fill_rr_str(uint8_t *buf, int offset, uint16_t qtype,
     uint16_t qclass, uint32_t ttl, uint16_t len, uint8_t *content);
-static int label_encode(uint8_t *buf, uint8_t *str);
-
-
-static int
-label_encode(uint8_t *buf, uint8_t *str)
-{
-    uint8_t  *p, *q, c;
-
-    if (*str == '.' || *str == '\0') {
-        return -1;
-    }
-
-    q = buf;
-    p = buf + 1;
-
-    while (1) {
-        c = *str++;
-        if (c == '.' || c == '\0') {
-            *q = p - q - 1;
-
-            if (c == '\0') {
-                *p++ = '\0';
-                break;
-            }
-            q = p++;
-
-        } else {
-            if (c > 0x40 && c < 0x5B) {
-                *p++ = c | 0x20;
-            } else {
-                *p++ = c;
-            }
-        }
-    }
-
-    return p - buf;
-}
 
 
 static int
@@ -249,17 +203,11 @@ fill_rr_str(uint8_t *buf, int offset, uint16_t qtype, uint16_t qclass,
 static int
 process_class_in(struct dns_query *query, uint8_t *buf)
 {
-    uint8_t          *p;
-    struct dnshdr    *resp;
-    struct dns_zone  *zone;
-    uint8_t           qlen;
-    uint32_t          address;
+    struct dns_zone     *zone;
+    uint8_t              qlen;
+    struct dns_records  *rs;
 
-    //////////////////
-    uint8_t            temp[128];
-    int                len;
-
-    zone = find_zone(query);
+    zone = zone_find(query);
     if (zone == NULL) {
         return answer_refused(query, buf);
     }
@@ -277,42 +225,53 @@ process_class_in(struct dns_query *query, uint8_t *buf)
             return answer_peer(query, buf);
         }
 
-        switch (query->qtype) {
-        case TYPE_A:
-            break;
-
-        case TYPE_CNAME:
-            break;
-
-        case TYPE_TXT:
-            break;
+        rs = zone_find_records(zone, qlen - 1, query->name);
+        if (rs == NULL) {
+            return answer_nxdomain(query, buf);
         }
 
-        /* TODO */
+        switch (query->qtype) {
+        case TYPE_A:
+            return answer_A(query, buf, rs);
+
+        case TYPE_CNAME:
+            return answer_CNAME(query, buf, rs);
+
+        case TYPE_TXT:
+            return answer_TXT(query, buf, rs);
+
+        case TYPE_NS:
+            return answer_NS(query, buf, rs);
+
+        default:
+            return answer_notimpl(query, buf);
+        }
 
     } else if (qlen == 0) {
-        /* TODO */
+        rs = zone_find_records(zone, 1, (uint8_t *) "@");
+        if (rs == NULL) {
+            return answer_nxdomain(query, buf);
+        }
+
+        switch (query->qtype) {
+        case TYPE_A:
+            return answer_A(query, buf, rs);
+
+        case TYPE_CNAME:
+            return answer_CNAME(query, buf, rs);
+
+        case TYPE_TXT:
+            return answer_TXT(query, buf, rs);
+
+        case TYPE_NS:
+            return answer_NS(query, buf, rs);
+
+        default:
+            return answer_notimpl(query, buf);
+        }
     }
 
-    memcpy(buf, query->packet, sizeof(struct dnshdr) + query->qlen + 2 + 2);
-    p = buf + sizeof(struct dnshdr) + query->qlen + 2 + 2;
-
-    len = label_encode(temp, "foo.fuck.com");
-
-    p += fill_rr_raw(p, sizeof(struct dnshdr), TYPE_CNAME, CLASS_IN,
-                     (uint32_t) sysctl_knamed_default_ttl, len,
-                     (uint8_t *) temp);
-
-    address = htonl(0x7f000002);
-    p += fill_rr_raw(p, p - buf - len,
-                     TYPE_A, CLASS_IN,
-                     (uint32_t) sysctl_knamed_default_ttl, 4,
-                     (uint8_t *) &address);
-
-    resp = (struct dnshdr *) buf;
-    RESP_SET(resp, 2, RCODE_NOERROR);
-
-    return p - buf;
+    return -1;
 }
 
 
@@ -451,6 +410,42 @@ answer_refused(struct dns_query *query, uint8_t *buf)
 
 
 static int
+answer_nxdomain(struct dns_query *query, uint8_t *buf)
+{
+    struct dnshdr  *resp;
+
+    memcpy(buf, query->packet, query->plen);
+
+    resp = (struct dnshdr *) buf;
+    resp->qr = 1;
+    resp->aa = 1;
+    resp->tc = 0;
+    resp->unused = 0;
+    resp->rcode = RCODE_NXDOMAIN;
+
+    return query->plen;
+}
+
+
+static int
+answer_noerror(struct dns_query *query, uint8_t *buf)
+{
+    struct dnshdr  *resp;
+
+    memcpy(buf, query->packet, query->plen);
+
+    resp = (struct dnshdr *) buf;
+    resp->qr = 1;
+    resp->aa = 1;
+    resp->tc = 0;
+    resp->unused = 0;
+    resp->rcode = RCODE_NOERROR;
+
+    return query->plen;
+}
+
+
+static int
 answer_peer(struct dns_query *query, uint8_t *buf)
 {
     uint32_t        address;
@@ -484,6 +479,397 @@ answer_peer(struct dns_query *query, uint8_t *buf)
 
     return p - buf;
 }
+
+
+static int
+answer_CNAME(struct dns_query *query, uint8_t *buf, struct dns_records *rs)
+{
+    struct acl_slot        *slot;
+    struct region_records  *rrs;
+    struct record          *r;
+    int                     i, rid, len;
+    uint8_t                *p;
+    struct dnshdr          *resp;
+    struct region_ids      *ids;
+
+    if ((slot = acl_find(acl_tbl, query->saddr)) == NULL) {
+        rrs = rs->regions[0];
+
+        if (list_empty(&rrs->CNAME_list)) {
+            return answer_nxdomain(query, buf);
+        }
+
+        r = list_first_entry(&rrs->CNAME_list, struct record, list);
+
+        len = 2 + 2 + 2 + 4 + 2 + r->len + 1;
+        if (len >= MAX_DNS_PACKET_LEN - sizeof(struct dnshdr)) {
+            return answer_noerror(query, buf);
+        }
+
+        memcpy(buf, query->packet,
+               sizeof(struct dnshdr) + query->qlen + 2 + 2);
+        p = buf + sizeof(struct dnshdr) + query->qlen + 2 + 2;
+
+        p += fill_rr_raw(p, sizeof(struct dnshdr),
+                         TYPE_CNAME, CLASS_IN,
+                         (uint32_t) (r->ttl ? r->ttl:
+                                              sysctl_knamed_default_ttl),
+                         r->len, r->content);
+
+        resp = (struct dnshdr *) buf;
+        RESP_SET(resp, 1, RCODE_NOERROR);
+        return p - buf;
+    }
+
+    ids = (struct region_ids *) slot->value;
+
+    for (i = 0; i < ids->count; i++) {
+        rid = ids->ids[i];
+        rrs = rs->regions[rid];
+        if (rrs == NULL) {
+            continue;
+        }
+
+        if (list_empty(&rrs->CNAME_list)) {
+            continue;
+        }
+
+        r = list_first_entry(&rrs->CNAME_list, struct record, list);
+
+        len = 2 + 2 + 2 + 4 + 2 + r->len + 1;
+        if (len >= MAX_DNS_PACKET_LEN - sizeof(struct dnshdr)) {
+            return answer_noerror(query, buf);
+        }
+
+        memcpy(buf, query->packet,
+               sizeof(struct dnshdr) + query->qlen + 2 + 2);
+        p = buf + sizeof(struct dnshdr) + query->qlen + 2 + 2;
+
+        p += fill_rr_raw(p, sizeof(struct dnshdr),
+                         TYPE_CNAME, CLASS_IN,
+                         (uint32_t) (r->ttl ? r->ttl:
+                                              sysctl_knamed_default_ttl),
+                         r->len, r->content);
+
+        resp = (struct dnshdr *) buf;
+        RESP_SET(resp, 1, RCODE_NOERROR);
+
+        return p - buf;
+    }
+
+    return answer_nxdomain(query, buf);
+}
+
+
+static int
+answer_A(struct dns_query *query, uint8_t *buf, struct dns_records *rs)
+{
+    struct acl_slot        *slot;
+    struct region_records  *rrs;
+    struct record          *r;
+    int                     i, rid, len, ancount;
+    uint8_t                *p;
+    struct dnshdr          *resp;
+    struct region_ids      *ids;
+
+    if ((slot = acl_find(acl_tbl, query->saddr)) == NULL) {
+        rrs = rs->regions[0];
+
+        if (list_empty(&rrs->CNAME_list) && list_empty(&rrs->A_list)) {
+            return answer_nxdomain(query, buf);
+        }
+
+        if (!list_empty(&rrs->CNAME_list)) {
+            r = list_first_entry(&rrs->CNAME_list, struct record, list);
+
+            len = 2 + 2 + 2 + 4 + 2 + r->len;
+            if (len >= MAX_DNS_PACKET_LEN - sizeof(struct dnshdr)) {
+                return answer_noerror(query, buf);
+            }
+
+            memcpy(buf, query->packet,
+                   sizeof(struct dnshdr) + query->qlen + 2 + 2);
+            p = buf + sizeof(struct dnshdr) + query->qlen + 2 + 2;
+
+            p += fill_rr_raw(p, sizeof(struct dnshdr),
+                             TYPE_CNAME, CLASS_IN,
+                             (uint32_t) (r->ttl ? r->ttl:
+                                                  sysctl_knamed_default_ttl),
+                             r->len, r->content);
+
+            resp = (struct dnshdr *) buf;
+            RESP_SET(resp, 1, RCODE_NOERROR);
+
+            return p - buf;
+        }
+
+        len = 0;
+        ancount = 0;
+        memcpy(buf, query->packet,
+               sizeof(struct dnshdr) + query->qlen + 2 + 2);
+        p = buf + sizeof(struct dnshdr) + query->qlen + 2 + 2;
+
+        list_for_each_entry(r, &rrs->A_list, list) {
+            len += 2 + 2 + 2 + 4 + 2 + r->len;
+            if (len >= MAX_DNS_PACKET_LEN - sizeof(struct dnshdr)) {
+                break;
+            }
+
+            ancount++;
+            p += fill_rr_raw(p, sizeof(struct dnshdr),
+                             TYPE_A, CLASS_IN,
+                             (uint32_t) (r->ttl ? r->ttl:
+                                                  sysctl_knamed_default_ttl),
+                             r->len, r->content);
+        }
+
+        resp = (struct dnshdr *) buf;
+        RESP_SET(resp, ancount, RCODE_NOERROR);
+
+        return p - buf;
+    }
+
+    ids = (struct region_ids *) slot->value;
+
+    for (i = 0; i < ids->count; i++) {
+        rid = ids->ids[i];
+        rrs = rs->regions[rid];
+        if (rrs == NULL) {
+            continue;
+        }
+
+        if (list_empty(&rrs->CNAME_list) && list_empty(&rrs->A_list)) {
+            continue;
+        }
+
+        if (!list_empty(&rrs->CNAME_list)) {
+            r = list_first_entry(&rrs->CNAME_list, struct record, list);
+
+            len = 2 + 2 + 2 + 4 + 2 + r->len;
+            if (len >= MAX_DNS_PACKET_LEN - sizeof(struct dnshdr)) {
+                return answer_noerror(query, buf);
+            }
+
+            memcpy(buf, query->packet,
+                   sizeof(struct dnshdr) + query->qlen + 2 + 2);
+            p = buf + sizeof(struct dnshdr) + query->qlen + 2 + 2;
+
+            p += fill_rr_raw(p, sizeof(struct dnshdr),
+                             TYPE_CNAME, CLASS_IN,
+                             (uint32_t) (r->ttl ? r->ttl:
+                                                  sysctl_knamed_default_ttl),
+                             r->len, r->content);
+
+            resp = (struct dnshdr *) buf;
+            RESP_SET(resp, 1, RCODE_NOERROR);
+
+            return p - buf;
+        }
+
+        len = 0;
+        ancount = 0;
+        memcpy(buf, query->packet,
+               sizeof(struct dnshdr) + query->qlen + 2 + 2);
+        p = buf + sizeof(struct dnshdr) + query->qlen + 2 + 2;
+
+        list_for_each_entry(r, &rrs->A_list, list) {
+            len += 2 + 2 + 2 + 4 + 2 + r->len;
+            if (len >= MAX_DNS_PACKET_LEN - sizeof(struct dnshdr)) {
+                break;
+            }
+
+            ancount++;
+            p += fill_rr_raw(p, sizeof(struct dnshdr),
+                             TYPE_A, CLASS_IN,
+                             (uint32_t) (r->ttl ? r->ttl:
+                                                  sysctl_knamed_default_ttl),
+                             r->len, r->content);
+        }
+
+        resp = (struct dnshdr *) buf;
+        RESP_SET(resp, ancount, RCODE_NOERROR);
+
+        return p - buf;
+    }
+
+    return answer_nxdomain(query, buf);
+}
+
+
+static int
+answer_TXT(struct dns_query *query, uint8_t *buf, struct dns_records *rs)
+{
+    struct acl_slot        *slot;
+    struct region_records  *rrs;
+    struct record          *r;
+    int                     i, rid, len, ancount;
+    uint8_t                *p;
+    struct dnshdr          *resp;
+    struct region_ids      *ids;
+
+    if ((slot = acl_find(acl_tbl, query->saddr)) == NULL) {
+        rrs = rs->regions[0];
+
+        if (list_empty(&rrs->TXT_list)) {
+            return answer_nxdomain(query, buf);
+        }
+
+        len = 0;
+        ancount = 0;
+        memcpy(buf, query->packet,
+               sizeof(struct dnshdr) + query->qlen + 2 + 2);
+        p = buf + sizeof(struct dnshdr) + query->qlen + 2 + 2;
+
+        list_for_each_entry(r, &rrs->TXT_list, list) {
+            len += 2 + 2 + 2 + 4 + 2 + r->len + 1;
+            if (len >= MAX_DNS_PACKET_LEN - sizeof(struct dnshdr)) {
+                break;
+            }
+
+            ancount++;
+            p += fill_rr_str(p, sizeof(struct dnshdr),
+                             TYPE_TXT, CLASS_IN,
+                             (uint32_t) (r->ttl ? r->ttl:
+                                                  sysctl_knamed_default_ttl),
+                             r->len, r->content);
+        }
+
+        resp = (struct dnshdr *) buf;
+        RESP_SET(resp, ancount, RCODE_NOERROR);
+
+        return p - buf;
+    }
+
+    ids = (struct region_ids *) slot->value;
+
+    for (i = 0; i < ids->count; i++) {
+        rid = ids->ids[i];
+        rrs = rs->regions[rid];
+        if (rrs == NULL) {
+            continue;
+        }
+
+        if (list_empty(&rrs->TXT_list)) {
+            continue;
+        }
+
+        len = 0;
+        ancount = 0;
+        memcpy(buf, query->packet,
+               sizeof(struct dnshdr) + query->qlen + 2 + 2);
+        p = buf + sizeof(struct dnshdr) + query->qlen + 2 + 2;
+
+        list_for_each_entry(r, &rrs->TXT_list, list) {
+            len += 2 + 2 + 2 + 4 + 2 + r->len + 1;
+            if (len >= MAX_DNS_PACKET_LEN - sizeof(struct dnshdr)) {
+                break;
+            }
+
+            ancount++;
+            p += fill_rr_str(p, sizeof(struct dnshdr),
+                             TYPE_TXT, CLASS_IN,
+                             (uint32_t) (r->ttl ? r->ttl:
+                                                  sysctl_knamed_default_ttl),
+                             r->len, r->content);
+        }
+
+        resp = (struct dnshdr *) buf;
+        RESP_SET(resp, ancount, RCODE_NOERROR);
+
+        return p - buf;
+    }
+
+    return answer_nxdomain(query, buf);
+}
+
+
+static int
+answer_NS(struct dns_query *query, uint8_t *buf, struct dns_records *rs)
+{
+    struct acl_slot        *slot;
+    struct region_records  *rrs;
+    struct record          *r;
+    int                     i, rid, len, ancount;
+    uint8_t                *p;
+    struct dnshdr          *resp;
+    struct region_ids      *ids;
+
+    if ((slot = acl_find(acl_tbl, query->saddr)) == NULL) {
+        rrs = rs->regions[0];
+
+        if (list_empty(&rrs->NS_list)) {
+            return answer_nxdomain(query, buf);
+        }
+
+        len = 0;
+        ancount = 0;
+        memcpy(buf, query->packet,
+               sizeof(struct dnshdr) + query->qlen + 2 + 2);
+        p = buf + sizeof(struct dnshdr) + query->qlen + 2 + 2;
+
+        list_for_each_entry(r, &rrs->NS_list, list) {
+            PR_INFO("NS: %d, %d", len, r->len);
+            len += 2 + 2 + 2 + 4 + 2 + r->len;
+            if (len >= MAX_DNS_PACKET_LEN - sizeof(struct dnshdr)) {
+                break;
+            }
+
+            ancount++;
+            p += fill_rr_raw(p, sizeof(struct dnshdr),
+                             TYPE_NS, CLASS_IN,
+                             (uint32_t) (r->ttl ? r->ttl:
+                                                  sysctl_knamed_default_ttl),
+                             r->len, r->content);
+        }
+
+        resp = (struct dnshdr *) buf;
+        RESP_SET(resp, ancount, RCODE_NOERROR);
+
+        return p - buf;
+    }
+
+    ids = (struct region_ids *) slot->value;
+
+    for (i = 0; i < ids->count; i++) {
+        rid = ids->ids[i];
+        rrs = rs->regions[rid];
+        if (rrs == NULL) {
+            continue;
+        }
+
+        if (list_empty(&rrs->NS_list)) {
+            continue;
+        }
+
+        len = 0;
+        ancount = 0;
+        memcpy(buf, query->packet,
+               sizeof(struct dnshdr) + query->qlen + 2 + 2);
+        p = buf + sizeof(struct dnshdr) + query->qlen + 2 + 2;
+
+        list_for_each_entry(r, &rrs->NS_list, list) {
+            len += 2 + 2 + 2 + 4 + 2 + r->len;
+            if (len >= MAX_DNS_PACKET_LEN - sizeof(struct dnshdr)) {
+                break;
+            }
+
+            ancount++;
+            p += fill_rr_raw(p, sizeof(struct dnshdr),
+                             TYPE_NS, CLASS_IN,
+                             (uint32_t) (r->ttl ? r->ttl:
+                                                  sysctl_knamed_default_ttl),
+                             r->len, r->content);
+        }
+
+        resp = (struct dnshdr *) buf;
+        RESP_SET(resp, ancount, RCODE_NOERROR);
+
+        return p - buf;
+    }
+
+    return answer_nxdomain(query, buf);
+}
+
 
 
 static int
@@ -549,97 +935,100 @@ process_query(struct iphdr *iph, struct udphdr *udph, struct dnshdr *dnsh,
 }
 
 
-static struct dns_zone *
-find_zone(struct dns_query *query)
-{
-    struct dns_zone  *zone;
-    uint8_t          *p;
-
-    p = query->name;
-
-    list_for_each_entry(zone, &dns_zones, list) {
-        if (query->len > zone->len
-            && *(p + (query->len - zone->len - 1)) == '.'
-            && strncmp(p + query->len - zone->len, zone->name, zone->len) == 0)
-        {
-            PR_INFO("Found zone \"%s\" for query \"%s\"",
-                    zone->name, query->name);
-
-            return zone;
-
-        } else if (query->len == zone->len
-                   && strncmp(query->name, zone->name, zone->len) == 0)
-        {
-            PR_INFO("Found zone \"%s\" for query \"%s\"",
-                    zone->name, query->name);
-
-            return zone;
-        }
-    }
-
-    PR_INFO("No zone found for query \"%s\"", query->name);
-
-    return NULL;
-}
-
-
-static void
-dump_zones(void)
-{
-    struct dns_zone  *zone;
-
-    list_for_each_entry(zone, &dns_zones, list) {
-        PR_INFO("ZONE: %s", zone->name);
-    }
-}
-
-
 int
 dns_init(void)
 {
     struct dns_zone  *zone;
+    uint32_t          address;
 
-    zone = (struct dns_zone *) kmalloc(sizeof(struct dns_zone), GFP_KERNEL);
-    if (zone == NULL) {
+    if ((zone = zone_create("example.com.", 60, "peer")) == NULL) {
         return -ENOMEM;
     }
 
-    memset(zone, 0, sizeof(struct dns_zone));
+    address = 0x12345678;
+    if (zone_add_record(zone, 3, "www", 0, TYPE_A, 50, 300, 4,
+                        (uint8_t *) &address) < 0)
+    {
+        goto error;
+    }
 
-    strcpy(zone->name, "example.com.");
-    zone->len = strlen("example.com.");
+    address = 0x78563412;
+    if (zone_add_record(zone, 3, "www", 0, TYPE_A, 50, 300, 4,
+                        (uint8_t *) &address) < 0)
+    {
+        goto error;
+    }
 
-    strcpy(zone->peer, "peer");
-    zone->peer_len = strlen("peer");
+    if (zone_add_record(zone, 3, "foo", 0, TYPE_CNAME, 50, 300,
+                       12, (uint8_t *) "foo.fuck.com") < 0)
+    {
+        goto error;
+    }
 
-    list_add(&zone->list, &dns_zones);
+    address = 0x11112222;
+    if (zone_add_record(zone, 1, "@", 0, TYPE_A, 50, 300,
+                       4, (uint8_t *) &address) < 0)
+    {
+        goto error;
+    }
 
-    dump_zones();
+    if (zone_add_record(zone, 1, "@", 0, TYPE_TXT, 50, 300,
+                       4, (uint8_t *) "test") < 0)
+    {
+        goto error;
+    }
+
+    if (zone_add_record(zone, 1, "@", 0, TYPE_TXT, 50, 300,
+                       5, (uint8_t *) "hello") < 0)
+    {
+        goto error;
+    }
+
+    if (zone_add_record(zone, 5, "hello", 0, TYPE_NS, 50, 300,
+                        15, (uint8_t *) "ns1.example.com") < 0)
+    {
+        PR_ERR("ADDED failed");
+        goto error;
+    }
 
     acl_tbl = acl_create();
     if (acl_tbl == NULL) {
-        return -ENOMEM;
+        goto error;
     }
 
-    if (acl_add(acl_tbl, 0x0a050000, 16, "abc") != 0) {
-        return -1;
+    g_ids = kmalloc(sizeof(struct region_ids) + sizeof(int) * 3, GFP_KERNEL);
+    if (g_ids == NULL) {
+        goto error;
+    }
+
+    g_ids->count = 3;
+    g_ids->ids[0] = 3;
+    g_ids->ids[1] = 5;
+    g_ids->ids[2] = 0;
+
+    if (acl_add(acl_tbl, 0x0a050000, 16, g_ids) != 0) {
+        goto error;
     }
 
     acl_dump(acl_tbl);
 
     return 0;
+
+error:
+
+    if (acl_tbl) {
+        acl_destroy(acl_tbl, NULL);
+    }
+
+    zones_destroy();
+    return -1;
 }
 
 
 void
 dns_cleanup(void)
 {
-    struct dns_zone  *zone, *n;
-
-    list_for_each_entry_safe(zone, n, &dns_zones, list) {
-        list_del(&zone->list);
-        kfree(zone);
-    }
-
+    kfree(g_ids);
+    zones_destroy();
     acl_destroy(acl_tbl, NULL);
 }

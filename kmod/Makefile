@@ -9,6 +9,7 @@ knamed-objs := knamed_main.o   \
                knamed_procfs.o \
                knamed_sysctl.o \
                knamed_acl.o    \
+			   knamed_zone.o   \
                knamed_util.o   \
                knamed_dns.o
 
