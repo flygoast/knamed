@@ -68,8 +68,9 @@
 #define KNAMED_CONF      "/etc/knamed/knamed.conf"
 
 
-#define KNAMED_PORT      53
-#define KNAMED_DEF_TTL   60
+#define KNAMED_PORT             53
+#define KNAMED_DEF_TTL          60
+#define KNAMED_PAGE_NUMBER      8
 
 
 extern int sysctl_knamed_port;

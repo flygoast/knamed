@@ -30,7 +30,7 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/init.h>
-#include <linux/fs.h>
+#include <linux/kthread.h>
 #include <linux/file.h>
 #include <linux/skbuff.h>
 #include <linux/ip.h>
@@ -43,11 +43,15 @@
 #include "knamed_dns.h"
 
 
+static struct task_struct  *knamed_task;
+
+
 static unsigned int knamed_in(unsigned int hooknum,
                               struct sk_buff *skb,
                               const struct net_device *in,
                               const struct net_device *out,
                               int (*okfn)(struct sk_buff *));
+
 
 static void process_skb(struct sk_buff *oskb);
 
@@ -61,6 +65,35 @@ static struct nf_hook_ops  knamed_ops[] __read_mostly = {
         .priority = NF_IP_PRI_FIRST,
     },
 };
+
+
+static int
+knamed_loop(void *data)
+{
+    allow_signal(SIGHUP);
+
+    while (1) {
+        set_current_state(TASK_INTERRUPTIBLE);
+
+        if (kthread_should_stop()) {
+            break;
+        }
+
+        if (signal_pending(current)) {
+            flush_signals(current);
+
+            PR_INFO("SIGNAL received");
+        }
+
+        PR_INFO("Hello knamed_task");
+
+        schedule_timeout(5 * HZ);
+    }
+
+    knamed_task = NULL;
+
+    return 0;
+}
 
 
 static unsigned int knamed_in(unsigned int hooknum,
@@ -203,6 +236,7 @@ static int __init knamed_init(void)
 {
     struct file  *filp;
     int           ret;
+    int           err;
 
     PR_INFO("starting");
     PR_INFO("Author: Gu Feng <flygoast@126.com>");
@@ -232,6 +266,13 @@ init:
 
     dns_init();
 
+    knamed_task = kthread_run(knamed_loop, NULL, "knamedtask");
+    if (IS_ERR(knamed_task)) {
+        PR_ERR("Create kernel thread failed");
+        err = PTR_ERR(knamed_task);
+        return err;
+    }
+
     PR_INFO("started");
 
     return 0;
@@ -250,6 +291,10 @@ static void __exit knamed_exit(void)
     knamed_procfs_release();
 
     dns_cleanup();
+
+    if (knamed_task) {
+        kthread_stop(knamed_task);
+    }
 
     PR_INFO("removed");
 }
