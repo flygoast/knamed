@@ -134,6 +134,7 @@ static struct file_operations  knamed_buffer_operations = {
     .open       = knamed_buf_open,
     .release    = knamed_buf_release,
     .mmap       = knamed_buf_mmap,
+    .llseek     = no_llseek,
 };
 
 
