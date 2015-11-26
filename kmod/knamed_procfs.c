@@ -35,7 +35,7 @@
 #include "knamed.h"
 
 
-#ifndef CONFIG_PROC_FS
+#ifdef CONFIG_PROC_FS
 
 static atomic_t  knamed_file_available = ATOMIC_INIT(1);
 
