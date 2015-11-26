@@ -35,6 +35,8 @@
 #include "knamed.h"
 
 
+#ifndef CONFIG_PROC_FS
+
 static atomic_t  knamed_file_available = ATOMIC_INIT(1);
 
 
@@ -149,7 +151,6 @@ static struct file_operations  knamed_version_operations = {
 void
 knamed_procfs_init(void)
 {
-#ifdef CONFIG_PROC_FS
     int                     i, sz;
     struct proc_dir_entry  *entry;
 
@@ -198,14 +199,12 @@ failed:
 
         kfree(knamed_pages);
     }
-#endif /* CONFIG_PROC_FS */
 }
 
 
 void
 knamed_procfs_release(void)
 {
-#ifdef CONFIG_PROC_FS
     int  i;
 
     (void) remove_proc_entry("knamed/buffer", NULL);
@@ -219,5 +218,11 @@ knamed_procfs_release(void)
     }
 
     kfree(knamed_pages);
-#endif /* CONFIG_PROC_FS */
 }
+
+
+#else
+
+#error "CONFIG_PROC_FS needed by knamed"
+
+#endif /* CONFIG_PROC_FS */
