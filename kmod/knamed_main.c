@@ -31,6 +31,7 @@
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/kthread.h>
+#include <linux/completion.h>
 #include <linux/file.h>
 #include <linux/skbuff.h>
 #include <linux/ip.h>
@@ -44,6 +45,7 @@
 
 
 static struct task_struct  *knamed_task;
+DECLARE_COMPLETION(comp);
 
 
 static unsigned int knamed_in(unsigned int hooknum,
@@ -92,7 +94,7 @@ knamed_loop(void *data)
 
     knamed_task = NULL;
 
-    return 0;
+    complete_and_exit(&comp, 0);
 }
 
 
@@ -294,6 +296,7 @@ static void __exit knamed_exit(void)
 
     if (knamed_task) {
         kthread_stop(knamed_task);
+        wait_for_completion(&comp);
     }
 
     PR_INFO("removed");
