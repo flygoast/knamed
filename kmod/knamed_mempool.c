@@ -27,19 +27,20 @@
  */
 
 
+#include <linux/slab.h>
 #include "knamed_mempool.h"
 
 
-#define KNAMED_ALIGN_UP     (((x) + s - 1) & (~(s - 1)))
+#define KNAMED_ALIGN_UP(x, s)   (((x) + s - 1) & (~(s - 1)))
 
 
-#define KNAMED_LARGE_SIZE   4096
-#define KNAMED_UNIT_SIZE    8
+#define KNAMED_LARGE_SIZE       4096
+#define KNAMED_UNIT_SIZE        8
 
 
 struct knamed_mempool {
-    size_t         large_object_size;
-    kmem_cache   **data_cachep;
+    size_t               large_object_size;
+    struct kmem_cache  **data_cachep;
 };
 
 
@@ -50,7 +51,7 @@ knamed_mempool_create(const char *name)
     struct knamed_mempool  *pool;
     uint8_t                 buf[128];
 
-    pool = (struct knamed_mempool *) kcalloc(sizeof(struct knamed_mempool),
+    pool = (struct knamed_mempool *) kzalloc(sizeof(struct knamed_mempool),
                                              GFP_KERNEL);
     if (pool == NULL) {
         goto failed;
@@ -60,7 +61,7 @@ knamed_mempool_create(const char *name)
 
     count = pool->large_object_size / KNAMED_UNIT_SIZE;
 
-    pool->data_cachep = (struct kmem_cache *) kcalloc(
+    pool->data_cachep = (struct kmem_cache **) kzalloc(
                                  sizeof(struct kmem_cache *) * count, GFP_KERNEL);
 
     if (pool->data_cachep == NULL) {
@@ -106,10 +107,6 @@ knamed_mempool_destroy(struct knamed_mempool *pool)
     count = pool->large_object_size / KNAMED_UNIT_SIZE;
 
     if (pool != NULL) {
-        if (pool->cleanup_cachep) {
-            kmem_cache_destroy(pool->cleanup_cachep);
-        }
-
         if (pool->data_cachep) {
             for (i = 1; i <= count; i++) {
                 if (pool->data_cachep[i] != NULL) {
