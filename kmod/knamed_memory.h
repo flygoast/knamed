@@ -27,14 +27,14 @@
  */
 
 
-#ifndef __KNAMED_MEMPOOL_H_INCLUDED__
-#define __KNAMED_MEMPOOL_H_INCLUDED__
+#ifndef __KNAMED_MEMORY_H_INCLUDED__
+#define __KNAMED_MEMORY_H_INCLUDED__
 
 
-struct knamed_mempool *knamed_mempool_create(const char *name);
-void knamed_mempool_destroy(struct knamed_mempool *pool);
-void *knamed_mempool_alloc(struct knamed_mempool *pool, size_t size);
-void knamed_mempool_free(struct knamed_mempool *pool, void *p, size_t size);
+int knamed_memory_init(void);
+void knamed_memory_release(void);
+void *knamed_memory_alloc(size_t size);
+void knamed_memory_free(void *p, size_t size);
 
 
-#endif /* __KNAMED_MEMPOOL_H_INCLUDED__ */
+#endif /* __KNAMED_MEMORY_H_INCLUDED__ */

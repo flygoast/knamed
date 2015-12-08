@@ -28,7 +28,7 @@
 
 
 #include <linux/slab.h>
-#include "knamed_mempool.h"
+#include "knamed_memory.h"
 
 
 #define KNAMED_ALIGN_UP(x, s)   (((x) + s - 1) & (~(s - 1)))
@@ -38,126 +38,115 @@
 #define KNAMED_UNIT_SIZE        8
 
 
-struct knamed_mempool {
-    size_t               large_object_size;
-    struct kmem_cache  **data_cachep;
-};
+int                  nr_data_cache;
+struct kmem_cache  **data_cachep;
 
 
-struct knamed_mempool *
-knamed_mempool_create(const char *name)
+int
+knamed_memory_init(void)
 {
-    int                     i, count;
-    struct knamed_mempool  *pool;
-    uint8_t                 buf[128];
+    int      i, log;
+    size_t   size;
+    uint8_t  buf[128];
 
-    pool = (struct knamed_mempool *) kzalloc(sizeof(struct knamed_mempool),
-                                             GFP_KERNEL);
-    if (pool == NULL) {
+    for (log = 3; (1 << log) < KNAMED_LARGE_SIZE; log++);
+
+    nr_data_cache = log - 2;
+
+    data_cachep = (struct kmem_cache **) kzalloc(
+                         sizeof(struct kmem_cache *) * nr_data_cache, GFP_KERNEL);
+
+    if (data_cachep == NULL) {
         goto failed;
     }
 
-    pool->large_object_size = KNAMED_LARGE_SIZE;
-
-    count = pool->large_object_size / KNAMED_UNIT_SIZE;
-
-    pool->data_cachep = (struct kmem_cache **) kzalloc(
-                                 sizeof(struct kmem_cache *) * count, GFP_KERNEL);
-
-    if (pool->data_cachep == NULL) {
-        goto failed;
-    }
-
-    for (i = 1; i <= count; i++) {
-        snprintf(buf, sizeof(buf) - 1, "%s-size-%d", name, i * KNAMED_UNIT_SIZE);
-        pool->data_cachep[i] = kmem_cache_create(buf, i * KNAMED_UNIT_SIZE,
-                                                 0, SLAB_HWCACHE_ALIGN, NULL);
-        if (pool->data_cachep[i] == NULL) {
+    size = 8;
+    for (i = 0; i < nr_data_cache; i++, size *= 2) {
+        snprintf(buf, sizeof(buf) - 1, "knamed-size-%d", (int) size);
+        data_cachep[i] = kmem_cache_create(buf, size, 0,
+                                           SLAB_HWCACHE_ALIGN, NULL);
+        if (data_cachep[i] == NULL) {
             goto failed;
         }
     }
 
-    return pool;
+    return 0;
 
 failed:
 
-    if (pool != NULL) {
-        if (pool->data_cachep) {
-            for (i = 1; i <= count; i++) {
-                if (pool->data_cachep[i] != NULL) {
-                    kmem_cache_destroy(pool->data_cachep[i]);
-                }
+    if (data_cachep) {
+        for (i = 0; i < nr_data_cache; i++) {
+            if (data_cachep[i] != NULL) {
+                kmem_cache_destroy(data_cachep[i]);
             }
-
-            kfree(pool->data_cachep);
         }
 
-        kfree(pool);
+        kfree(data_cachep);
     }
 
-    return NULL;
+    return -EINVAL;
 }
 
 
 void
-knamed_mempool_destroy(struct knamed_mempool *pool)
+knamed_memory_release(void)
 {
-    int  i, count;
+    int  i;
 
-    count = pool->large_object_size / KNAMED_UNIT_SIZE;
-
-    if (pool != NULL) {
-        if (pool->data_cachep) {
-            for (i = 1; i <= count; i++) {
-                if (pool->data_cachep[i] != NULL) {
-                    kmem_cache_destroy(pool->data_cachep[i]);
-                }
+    if (data_cachep) {
+        for (i = 0; i < nr_data_cache; i++) {
+            if (data_cachep[i] != NULL) {
+                kmem_cache_destroy(data_cachep[i]);
             }
-
-            kfree(pool->data_cachep);
         }
 
-        kfree(pool);
+        kfree(data_cachep);
     }
 }
 
 
 void *
-knamed_mempool_alloc(struct knamed_mempool *pool, size_t size)
+knamed_memory_alloc(size_t size)
 {
     void    *p;
-    int      i;
-    size_t   aligned_size;
+    int      log;
+    size_t   rounded_size;
 
-    aligned_size = KNAMED_ALIGN_UP(size, KNAMED_UNIT_SIZE);
+    log = 3;
+    rounded_size = 1 << log;
+    while (rounded_size < size) {
+        log++;
+        rounded_size <<= 1;
+    }
 
-    if (aligned_size > pool->large_object_size) {
-        p = kmalloc(aligned_size, GFP_KERNEL);
+    if (rounded_size > KNAMED_LARGE_SIZE) {
+        p = kmalloc(rounded_size, GFP_KERNEL);
         return p;
     }
 
-    i = aligned_size / KNAMED_UNIT_SIZE;
-
-    p = kmem_cache_alloc(pool->data_cachep[i], GFP_KERNEL);
+    p = kmem_cache_alloc(data_cachep[log - 3], GFP_KERNEL);
 
     return p;
 }
 
 
 void
-knamed_mempool_free(struct knamed_mempool *pool, void *p, size_t size)
+knamed_memory_free(void *p, size_t size)
 {
-    int     i;
-    size_t  aligned_size;
+    int      log;
+    size_t   rounded_size;
 
-    aligned_size = KNAMED_ALIGN_UP(size, KNAMED_UNIT_SIZE);
+    log = 3;
+    rounded_size = 1 << log;
+    while (rounded_size < size) {
+        log++;
+        rounded_size <<= 1;
+    }
 
-    if (aligned_size > pool->large_object_size) {
+    if (rounded_size > KNAMED_LARGE_SIZE) {
         kfree(p);
         return;
     }
 
-    i = aligned_size / KNAMED_UNIT_SIZE;
-
-    kmem_cache_free(pool->data_cachep[i], p);
+    kmem_cache_free(data_cachep[log - 3], p);
 }
