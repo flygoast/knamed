@@ -42,6 +42,7 @@
 #include <asm/unaligned.h>
 #include "knamed.h"
 #include "knamed_dns.h"
+#include "knamed_memory.h"
 
 
 static struct task_struct  *knamed_task;
@@ -263,8 +264,11 @@ init:
         goto cleanup;
     }
 
+    knamed_memory_init();
+
     knamed_procfs_init();
     knamed_sysctl_register();
+
 
     dns_init();
 
@@ -298,6 +302,8 @@ static void __exit knamed_exit(void)
         kthread_stop(knamed_task);
         wait_for_completion(&comp);
     }
+
+    knamed_memory_release();
 
     PR_INFO("removed");
 }

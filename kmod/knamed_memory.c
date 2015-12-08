@@ -28,6 +28,7 @@
 
 
 #include <linux/slab.h>
+#include "knamed.h"
 #include "knamed_memory.h"
 
 
@@ -35,37 +36,58 @@
 
 
 #define KNAMED_LARGE_SIZE       4096
-#define KNAMED_UNIT_SIZE        8
+#define KNAMED_UNIT_LOG         4
+#define KNAMED_UNIT_SIZE        (1 << KNAMED_UNIT_LOG)
+#define KNAMED_NAME_SIZE        64
 
 
-int                  nr_data_cache;
-struct kmem_cache  **data_cachep;
+struct data_cache {
+    struct kmem_cache  *cachep;
+    uint8_t            *name;
+};
+
+
+int                 nr_data_cache;
+struct data_cache  *data_cachep;
+struct kmem_cache  *name_cachep;
 
 
 int
 knamed_memory_init(void)
 {
-    int      i, log;
-    size_t   size;
-    uint8_t  buf[128];
+    int       i, log;
+    size_t    size;
+    uint8_t  *buf;
 
-    for (log = 3; (1 << log) < KNAMED_LARGE_SIZE; log++);
+    for (log = KNAMED_UNIT_LOG; (1 << log) < KNAMED_LARGE_SIZE; log++);
 
-    nr_data_cache = log - 2;
+    nr_data_cache = log - KNAMED_UNIT_LOG + 1;
 
-    data_cachep = (struct kmem_cache **) kzalloc(
-                         sizeof(struct kmem_cache *) * nr_data_cache, GFP_KERNEL);
+    PR_INFO("LOG: %d, count: %d", log, nr_data_cache);
+
+    name_cachep = kmem_cache_create("knamed_name", KNAMED_NAME_SIZE, 0,
+                                    SLAB_HWCACHE_ALIGN, NULL);
+    if (name_cachep == NULL) {
+        goto failed;
+    }
+
+    data_cachep = (struct data_cache *) kzalloc(
+                           sizeof(struct data_cache) * nr_data_cache, GFP_KERNEL);
 
     if (data_cachep == NULL) {
         goto failed;
     }
 
-    size = 8;
-    for (i = 0; i < nr_data_cache; i++, size *= 2) {
-        snprintf(buf, sizeof(buf) - 1, "knamed-size-%d", (int) size);
-        data_cachep[i] = kmem_cache_create(buf, size, 0,
-                                           SLAB_HWCACHE_ALIGN, NULL);
-        if (data_cachep[i] == NULL) {
+    size = KNAMED_UNIT_SIZE;
+    for (i = 0; i < nr_data_cache; i++, size <<= 1) {
+        buf = kmem_cache_alloc(name_cachep, GFP_KERNEL);
+        snprintf(buf, KNAMED_NAME_SIZE - 1, "knamed-size-%d", (int) size);
+        PR_INFO("NAME: %s", buf);
+
+        data_cachep[i].name = buf;
+        data_cachep[i].cachep = kmem_cache_create(buf, size, 0,
+                                                  SLAB_HWCACHE_ALIGN, NULL);
+        if (data_cachep[i].cachep == NULL) {
             goto failed;
         }
     }
@@ -74,15 +96,7 @@ knamed_memory_init(void)
 
 failed:
 
-    if (data_cachep) {
-        for (i = 0; i < nr_data_cache; i++) {
-            if (data_cachep[i] != NULL) {
-                kmem_cache_destroy(data_cachep[i]);
-            }
-        }
-
-        kfree(data_cachep);
-    }
+    knamed_memory_release();
 
     return -EINVAL;
 }
@@ -93,14 +107,26 @@ knamed_memory_release(void)
 {
     int  i;
 
-    if (data_cachep) {
-        for (i = 0; i < nr_data_cache; i++) {
-            if (data_cachep[i] != NULL) {
-                kmem_cache_destroy(data_cachep[i]);
+    if (name_cachep) {
+        if (data_cachep) {
+            for (i = 0; i < nr_data_cache; i++) {
+                if (data_cachep[i].cachep != NULL) {
+                    kmem_cache_destroy(data_cachep[i].cachep);
+                    data_cachep[i].cachep = NULL;
+                }
+
+                if (data_cachep[i].name != NULL) {
+                    kmem_cache_free(name_cachep, data_cachep[i].name);
+                    data_cachep[i].name = NULL;
+                }
             }
+
+            nr_data_cache = 0;
+            kfree(data_cachep);
+            data_cachep = NULL;
         }
 
-        kfree(data_cachep);
+        kmem_cache_destroy(name_cachep);
     }
 }
 
@@ -125,7 +151,7 @@ knamed_memory_alloc(size_t size)
         return p + sizeof(size_t);
     }
 
-    p = kmem_cache_alloc(data_cachep[log - 3], GFP_KERNEL);
+    p = kmem_cache_alloc(data_cachep[log - 3].cachep, GFP_KERNEL);
     *(size_t *) p = size;
 
     return p + sizeof(size_t);
@@ -155,5 +181,5 @@ knamed_memory_free(void *p)
         return;
     }
 
-    kmem_cache_free(data_cachep[log - 3], np);
+    kmem_cache_free(data_cachep[log - 3].cachep, np);
 }
