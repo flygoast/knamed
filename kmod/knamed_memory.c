@@ -138,7 +138,7 @@ knamed_memory_alloc(size_t size)
     int      log;
     size_t   rounded_size;
 
-    log = 3;
+    log = KNAMED_UNIT_LOG;
     rounded_size = 1 << log;
     while (rounded_size < (size + sizeof(size_t))) {
         log++;
@@ -151,7 +151,7 @@ knamed_memory_alloc(size_t size)
         return p + sizeof(size_t);
     }
 
-    p = kmem_cache_alloc(data_cachep[log - 3].cachep, GFP_KERNEL);
+    p = kmem_cache_alloc(data_cachep[log - KNAMED_UNIT_LOG].cachep, GFP_KERNEL);
     *(size_t *) p = size;
 
     return p + sizeof(size_t);
@@ -169,7 +169,7 @@ knamed_memory_free(void *p)
 
     size = *(size_t *) np;
 
-    log = 3;
+    log = KNAMED_UNIT_LOG;
     rounded_size = 1 << log;
     while (rounded_size < size) {
         log++;
@@ -181,5 +181,5 @@ knamed_memory_free(void *p)
         return;
     }
 
-    kmem_cache_free(data_cachep[log - 3].cachep, np);
+    kmem_cache_free(data_cachep[log - KNAMED_UNIT_LOG].cachep, np);
 }
