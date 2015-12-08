@@ -28,6 +28,7 @@
 
 
 #include <linux/slab.h>
+#include <linux/vmalloc.h>
 #include <linux/log2.h>
 #include "knamed.h"
 #include "knamed_memory.h"
@@ -143,12 +144,36 @@ knamed_memory_alloc(size_t size)
     log = ilog2(rounded_size);
 
     if (rounded_size > KNAMED_LARGE_SIZE) {
-        p = kmalloc(rounded_size, GFP_KERNEL);
+        p = __vmalloc(rounded_size, GFP_KERNEL | __GFP_HIGHMEM, PAGE_KERNEL);
         *(size_t *) p = size;
         return p + sizeof(size_t);
     }
 
     p = kmem_cache_alloc(data_cachep[log - KNAMED_UNIT_LOG].cachep, GFP_KERNEL);
+    *(size_t *) p = size;
+
+    return p + sizeof(size_t);
+}
+
+
+void *
+knamed_memory_zalloc(size_t size)
+{
+    void    *p;
+    int      log;
+    size_t   rounded_size;
+
+    rounded_size = roundup_pow_of_two(size + sizeof(size_t));
+    log = ilog2(rounded_size);
+
+    if (rounded_size > KNAMED_LARGE_SIZE) {
+        p = __vmalloc(rounded_size, GFP_KERNEL | __GFP_HIGHMEM | __GFP_ZERO,
+                      PAGE_KERNEL);
+        *(size_t *) p = size;
+        return p + sizeof(size_t);
+    }
+
+    p = kmem_cache_zalloc(data_cachep[log - KNAMED_UNIT_LOG].cachep, GFP_KERNEL);
     *(size_t *) p = size;
 
     return p + sizeof(size_t);
@@ -170,7 +195,7 @@ knamed_memory_free(void *p)
     log = ilog2(rounded_size);
 
     if (rounded_size > KNAMED_LARGE_SIZE) {
-        kfree(np);
+        vfree(np);
         return;
     }
 

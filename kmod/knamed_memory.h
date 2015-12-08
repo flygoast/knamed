@@ -33,6 +33,7 @@
 
 int knamed_memory_init(void);
 void knamed_memory_release(void);
+void *knamed_memory_zalloc(size_t size);
 void *knamed_memory_alloc(size_t size);
 void knamed_memory_free(void *p);
 
