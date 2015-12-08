@@ -28,6 +28,7 @@
 
 
 #include <linux/slab.h>
+#include <linux/log2.h>
 #include "knamed.h"
 #include "knamed_memory.h"
 
@@ -138,12 +139,8 @@ knamed_memory_alloc(size_t size)
     int      log;
     size_t   rounded_size;
 
-    log = KNAMED_UNIT_LOG;
-    rounded_size = 1 << log;
-    while (rounded_size < (size + sizeof(size_t))) {
-        log++;
-        rounded_size <<= 1;
-    }
+    rounded_size = roundup_pow_of_two(size + sizeof(size_t));
+    log = ilog2(rounded_size);
 
     if (rounded_size > KNAMED_LARGE_SIZE) {
         p = kmalloc(rounded_size, GFP_KERNEL);
@@ -169,12 +166,8 @@ knamed_memory_free(void *p)
 
     size = *(size_t *) np;
 
-    log = KNAMED_UNIT_LOG;
-    rounded_size = 1 << log;
-    while (rounded_size < size) {
-        log++;
-        rounded_size <<= 1;
-    }
+    rounded_size = roundup_pow_of_two(size + sizeof(size_t));
+    log = ilog2(rounded_size);
 
     if (rounded_size > KNAMED_LARGE_SIZE) {
         kfree(np);
