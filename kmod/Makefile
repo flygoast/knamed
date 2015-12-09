@@ -12,6 +12,7 @@ knamed-objs := knamed_main.o   	\
 			   knamed_zone.o   	\
                knamed_util.o   	\
 			   knamed_memory.o	\
+			   knamed_radix.o   \
                knamed_dns.o
 
 all:
