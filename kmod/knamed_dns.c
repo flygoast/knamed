@@ -33,7 +33,7 @@
 #include <linux/slab.h>
 #include "knamed.h"
 #include "knamed_dns.h"
-#include "knamed_acl.h"
+#include "knamed_iptable.h"
 #include "knamed_zone.h"
 #include "knamed_util.h"
 
@@ -52,7 +52,7 @@
     } while (0)
 
 
-struct acl_table  *acl_tbl;
+knamed_iptable_t  *iptable;
 
 
 struct region_ids {
@@ -484,7 +484,7 @@ answer_peer(struct dns_query *query, uint8_t *buf)
 static int
 answer_CNAME(struct dns_query *query, uint8_t *buf, struct dns_records *rs)
 {
-    struct acl_slot        *slot;
+    knamed_iptable_slot_t  *slot;
     struct region_records  *rrs;
     struct record          *r;
     int                     i, rid, len;
@@ -492,7 +492,7 @@ answer_CNAME(struct dns_query *query, uint8_t *buf, struct dns_records *rs)
     struct dnshdr          *resp;
     struct region_ids      *ids;
 
-    if ((slot = acl_find(acl_tbl, query->saddr)) == NULL) {
+    if ((slot = knamed_iptable_find(iptable, query->saddr)) == NULL) {
         rrs = rs->regions[0];
 
         if (list_empty(&rrs->CNAME_list)) {
@@ -564,7 +564,7 @@ answer_CNAME(struct dns_query *query, uint8_t *buf, struct dns_records *rs)
 static int
 answer_A(struct dns_query *query, uint8_t *buf, struct dns_records *rs)
 {
-    struct acl_slot        *slot;
+    knamed_iptable_slot_t  *slot;
     struct region_records  *rrs;
     struct record          *r;
     int                     i, rid, len, ancount;
@@ -572,7 +572,7 @@ answer_A(struct dns_query *query, uint8_t *buf, struct dns_records *rs)
     struct dnshdr          *resp;
     struct region_ids      *ids;
 
-    if ((slot = acl_find(acl_tbl, query->saddr)) == NULL) {
+    if ((slot = knamed_iptable_find(iptable, query->saddr)) == NULL) {
         rrs = rs->regions[0];
 
         if (list_empty(&rrs->CNAME_list) && list_empty(&rrs->A_list)) {
@@ -699,7 +699,7 @@ answer_A(struct dns_query *query, uint8_t *buf, struct dns_records *rs)
 static int
 answer_TXT(struct dns_query *query, uint8_t *buf, struct dns_records *rs)
 {
-    struct acl_slot        *slot;
+    knamed_iptable_slot_t  *slot;
     struct region_records  *rrs;
     struct record          *r;
     int                     i, rid, len, ancount;
@@ -707,7 +707,7 @@ answer_TXT(struct dns_query *query, uint8_t *buf, struct dns_records *rs)
     struct dnshdr          *resp;
     struct region_ids      *ids;
 
-    if ((slot = acl_find(acl_tbl, query->saddr)) == NULL) {
+    if ((slot = knamed_iptable_find(iptable, query->saddr)) == NULL) {
         rrs = rs->regions[0];
 
         if (list_empty(&rrs->TXT_list)) {
@@ -786,7 +786,7 @@ answer_TXT(struct dns_query *query, uint8_t *buf, struct dns_records *rs)
 static int
 answer_NS(struct dns_query *query, uint8_t *buf, struct dns_records *rs)
 {
-    struct acl_slot        *slot;
+    knamed_iptable_slot_t  *slot;
     struct region_records  *rrs;
     struct record          *r;
     int                     i, rid, len, ancount;
@@ -794,7 +794,7 @@ answer_NS(struct dns_query *query, uint8_t *buf, struct dns_records *rs)
     struct dnshdr          *resp;
     struct region_ids      *ids;
 
-    if ((slot = acl_find(acl_tbl, query->saddr)) == NULL) {
+    if ((slot = knamed_iptable_find(iptable, query->saddr)) == NULL) {
         rrs = rs->regions[0];
 
         if (list_empty(&rrs->NS_list)) {
@@ -991,8 +991,8 @@ dns_init(void)
         goto error;
     }
 
-    acl_tbl = acl_create();
-    if (acl_tbl == NULL) {
+    iptable = knamed_iptable_create();
+    if (iptable == NULL) {
         goto error;
     }
 
@@ -1006,18 +1006,18 @@ dns_init(void)
     g_ids->ids[1] = 5;
     g_ids->ids[2] = 0;
 
-    if (acl_add(acl_tbl, 0x0a050000, 16, g_ids) != 0) {
+    if (knamed_iptable_add(iptable, 0x0a050000, 16, g_ids) != 0) {
         goto error;
     }
 
-    acl_dump(acl_tbl);
+    knamed_iptable_dump(iptable);
 
     return 0;
 
 error:
 
-    if (acl_tbl) {
-        acl_destroy(acl_tbl, NULL);
+    if (iptable) {
+        knamed_iptable_destroy(iptable, NULL);
     }
 
     zones_destroy();
@@ -1030,5 +1030,5 @@ dns_cleanup(void)
 {
     kfree(g_ids);
     zones_destroy();
-    acl_destroy(acl_tbl, NULL);
+    knamed_iptable_destroy(iptable, NULL);
 }

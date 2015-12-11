@@ -27,35 +27,38 @@
  */
 
 
-#ifndef __KNAMED_ACL_H_INCLUDED__
-#define __KNAMED_ACL_H_INCLUDED__
+#ifndef __KNAMED_IPTABLE_H_INCLUDED__
+#define __KNAMED_IPTABLE_H_INCLUDED__
 
 
 #define HASH_BUCKET_SIZE    256
 
 
-struct acl_slot {
+typedef struct knamed_iptable_slot {
     struct list_head   list;
     uint32_t           addr;
     void              *value;
-};
+} knamed_iptable_slot_t;
 
 
-struct acl_hash {
+struct knamed_iptable_hash {
     struct list_head  *bucket;
 };
 
 
-struct acl_table {
-    struct acl_hash  hash[33];
-};
+typedef struct knamed_iptable {
+    struct knamed_iptable_hash  hash[33];
+} knamed_iptable_t;
 
 
-struct acl_slot *acl_find(struct acl_table *acl, uint32_t addr);
-int acl_add(struct acl_table *acl, uint32_t addr, int mask, void *value);
-struct acl_table *acl_create(void);
-void acl_destroy(struct acl_table *acl, void (*value_free)(void *value));
-void acl_dump(struct acl_table *acl);
+knamed_iptable_slot_t *knamed_iptable_find(knamed_iptable_t *iptable,
+    uint32_t addr);
+int knamed_iptable_add(knamed_iptable_t *iptable, uint32_t addr, int mask,
+    void *value);
+knamed_iptable_t *knamed_iptable_create(void);
+void knamed_iptable_destroy(knamed_iptable_t *iptable,
+    void (*value_free)(void *value));
+void knamed_iptable_dump(knamed_iptable_t *iptable);
 
 
-#endif /* __KNAMED_ACL_H_INCLUDED__ */
+#endif /* __KNAMED_IPTABLE_H_INCLUDED__ */

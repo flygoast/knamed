@@ -30,17 +30,18 @@
 #include <linux/list.h>
 #include <linux/slab.h>
 #include "knamed.h"
-#include "knamed_acl.h"
+#include "knamed_memory.h"
+#include "knamed_iptable.h"
 
 
-struct acl_slot *
-acl_find(struct acl_table *acl, uint32_t addr)
+knamed_iptable_slot_t *
+iptable_find(knamed_iptable_t *iptable, uint32_t addr)
 {
-    int               i, h;
-    uint32_t          a, m;
-    struct acl_slot  *slot;
+    int                     i, h;
+    uint32_t                a, m;
+    knamed_iptable_slot_t  *slot;
 
-    if (acl == NULL) {
+    if (iptable == NULL) {
         return NULL;
     }
 
@@ -49,7 +50,7 @@ acl_find(struct acl_table *acl, uint32_t addr)
         a = addr & (m << (32 - i));
         h = ((a >> 24) + (a >> 16) + (a >> 8) + (a & 0xff)) & 0xff;
 
-        list_for_each_entry(slot, &acl->hash[i].bucket[h], list) {
+        list_for_each_entry(slot, &iptable->hash[i].bucket[h], list) {
             if (a == slot->addr) {
                 return slot;
             }
@@ -61,17 +62,19 @@ acl_find(struct acl_table *acl, uint32_t addr)
 
 
 int
-acl_add(struct acl_table *acl, uint32_t addr, int mask, void *value)
+knamed_iptable_add(knamed_iptable_t *iptable, uint32_t addr, int mask,
+    void *value)
 {
-    struct acl_slot  *slot;
-    int               h;
-    uint32_t          m;
+    knamed_iptable_slot_t  *slot;
+    int                     h;
+    uint32_t                m;
 
     if (mask < 0 || mask > 32) {
         return -1;
     }
 
-    slot = (struct acl_slot *) kmalloc(sizeof(struct acl_slot), GFP_KERNEL);
+    slot = (knamed_iptable_slot_t *) knamed_memory_alloc(
+                                                 sizeof(knamed_iptable_slot_t));
     if (slot == NULL) {
         return -ENOMEM;
     }
@@ -85,89 +88,94 @@ acl_add(struct acl_table *acl, uint32_t addr, int mask, void *value)
     slot->addr = addr;
     slot->value = value;
 
-    list_add(&slot->list, &acl->hash[mask].bucket[h]);
+    list_add(&slot->list, &iptable->hash[mask].bucket[h]);
 
     return 0;
 }
 
 
-struct acl_table *
-acl_create(void)
+knamed_iptable_t *
+knamed_iptable_create(void)
 {
     int                i, j;
-    struct acl_table  *acl;
+    knamed_iptable_t  *iptable;
 
-    acl = (struct acl_table *) kmalloc(sizeof(struct acl_table), GFP_KERNEL);
-    if (acl == NULL) {
+    iptable = (knamed_iptable_t *) knamed_memory_alloc(
+                                                      sizeof(knamed_iptable_t));
+    if (iptable == NULL) {
         return NULL;
     }
 
     for (i = 0; i < 33; i++) {
-        acl->hash[i].bucket = NULL;
-        acl->hash[i].bucket = (struct list_head *) kmalloc(
-                       sizeof(struct list_head) * HASH_BUCKET_SIZE, GFP_KERNEL);
-        if (acl->hash[i].bucket == NULL) {
+        iptable->hash[i].bucket = NULL;
+        iptable->hash[i].bucket = (struct list_head *) knamed_memory_alloc(
+                                   sizeof(struct list_head) * HASH_BUCKET_SIZE);
+        if (iptable->hash[i].bucket == NULL) {
             goto err;
         }
 
         for (j = 0; j < HASH_BUCKET_SIZE; j++) {
-            INIT_LIST_HEAD(&acl->hash[i].bucket[j]);
+            INIT_LIST_HEAD(&iptable->hash[i].bucket[j]);
         }
     }
 
-    return acl;
+    return iptable;
 
 err:
 
     for (i = 0; i < 33; i++) {
-        if (acl->hash[i].bucket == NULL) {
-            kfree(acl->hash[i].bucket);
+        if (iptable->hash[i].bucket == NULL) {
+            knamed_memory_free(iptable->hash[i].bucket);
         }
     }
 
-    kfree(acl);
+    knamed_memory_free(iptable);
 
     return NULL;
 }
 
 
 void
-acl_destroy(struct acl_table *acl, void (*value_free)(void *value))
+knamed_iptable_destroy(knamed_iptable_t *iptable,
+    void (*value_free)(void *value))
 {
-    int               i, j;
-    struct acl_slot  *slot, *s;
+    int                     i, j;
+    knamed_iptable_slot_t  *slot, *s;
 
-    if (acl == NULL) {
+    if (iptable == NULL) {
         return;
     }
 
     for (i = 0; i < 33; i++) {
         for (j = 0; j < HASH_BUCKET_SIZE; j++) {
-            list_for_each_entry_safe(slot, s, &acl->hash[i].bucket[j], list) {
+            list_for_each_entry_safe(slot, s,
+                                     &iptable->hash[i].bucket[j], list)
+            {
                 list_del(&slot->list);
 
                 if (value_free) {
                     value_free(slot->value);
                 }
-                kfree(slot);
+                knamed_memory_free(slot);
             }
         }
 
-        kfree(acl->hash[i].bucket);
+        knamed_memory_free(iptable->hash[i].bucket);
     }
 
-    kfree(acl);
+    knamed_memory_free(iptable);
 }
 
 
 void
-acl_dump(struct acl_table *acl)
+knamed_iptable_dump(knamed_iptable_t *iptable)
 {
-    struct acl_slot  *slot;
-    int               i, j, buckets, chain_len, max_chain_len, total_chain_len;
-    int               count[50];
+    knamed_iptable_slot_t  *slot;
+    int                     i, j, buckets;
+    int                     chain_len, max_chain_len, total_chain_len;
+    int                     count[50];
 
-    if (acl == NULL) {
+    if (iptable == NULL) {
         return;
     }
 
@@ -181,13 +189,13 @@ acl_dump(struct acl_table *acl)
         for (j = 0; j < HASH_BUCKET_SIZE; j++) {
             chain_len = 0;
 
-            if (list_empty(&acl->hash[i].bucket[j])) {
+            if (list_empty(&iptable->hash[i].bucket[j])) {
                 count[0]++;
                 continue;
             }
 
             buckets++;
-            list_for_each_entry(slot, &acl->hash[i].bucket[j], list) {
+            list_for_each_entry(slot, &iptable->hash[i].bucket[j], list) {
                 chain_len++;
             }
 
@@ -201,7 +209,7 @@ acl_dump(struct acl_table *acl)
         }
 
         if (total_chain_len != 0) {
-            PR_INFO("========== acl dump ===========");
+            PR_INFO("========== iptable dump ===========");
             PR_INFO("mask: %d", i);
             PR_INFO(" number of elements: %d", total_chain_len);
             PR_INFO(" buckets: %d", buckets);
