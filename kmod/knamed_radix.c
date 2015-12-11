@@ -202,12 +202,10 @@ knamed_radix_insert(knamed_radix_t *rt, uint8_t *key, uint16_t len, void *elem)
         knamed_memory_free(add);
     } else {
         /* prefix found */
-        BUG_ON(pos >= len);
-
         byte = key[pos];
 
         if (byte < n->offset || byte - n->offset >= n->len) {
-            /* make space in the array for it; adjusts offset */
+            /* make space in the array for it, adjusts offset */
             if (knamed_radix_array_space(n, byte) < 0) {
                 knamed_memory_free(add);
                 return -ENOMEM;
@@ -245,7 +243,7 @@ knamed_radix_insert(knamed_radix_t *rt, uint8_t *key, uint16_t len, void *elem)
             n->array[byte].node = add;
 
         } else {
-            /* use existing bucket, but it has a shared prefix, need a split */
+            /* use existing node, but it has a shared prefix, need a split */
             if (knamed_radix_array_split(&n->array[byte - n->offset],
                                          key, pos + 1, len, add)
                 < 0)
@@ -640,7 +638,7 @@ knamed_radix_array_space(knamed_radix_node_t *n, uint8_t byte)
     }
 
     if (n->len == 0) {
-        /* array unused */
+        /* the array not being unused */
         n->len = 1;
         n->offset = byte;
 
@@ -732,11 +730,7 @@ knamed_radix_str_create(knamed_radix_array_t *r, uint8_t *key, uint16_t pos,
 }
 
 
-/* allocate remainder from prefixes for a split:
- * @plen: len prefix,
- * @l: longer string,
- * @llen: length of l,
- */
+/* allocate a string for remainder from prefixes */
 static int
 knamed_radix_prefix_remainder(uint16_t plen, uint8_t *l, uint16_t llen,
     uint8_t **s, uint16_t *slen)
@@ -978,7 +972,7 @@ knamed_radix_prev_from_index(knamed_radix_node_t *node, uint8_t index)
     while (i > 0) {
         i--;
         if (node->array[i].node) {
-            prev = knamed_radix_last_in_subtree_incl_self(node);
+            prev = knamed_radix_last_in_subtree_incl_self(node->array[i].node);
             if (prev) {
                 return prev;
             }
@@ -1021,10 +1015,10 @@ knamed_radix_last_in_subtree(knamed_radix_node_t *node)
                     return last;
                 }
             }
-        }
 
-        if (node->array[i].node->elem) {
-            return node->array[i].node;
+            if (node->array[i].node->elem) {
+                return node->array[i].node;
+            }
         }
     }
 
