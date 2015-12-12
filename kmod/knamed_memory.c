@@ -187,6 +187,10 @@ knamed_memory_free(void *p)
     size_t    rounded_size, size;
     void     *np;
 
+    if (p == NULL) {
+        return;
+    }
+
     np = p - sizeof(size_t);
 
     size = *(size_t *) np;
