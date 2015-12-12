@@ -35,7 +35,7 @@
 
 
 knamed_iptable_slot_t *
-iptable_find(knamed_iptable_t *iptable, uint32_t addr)
+knamed_iptable_find(knamed_iptable_t *iptable, uint32_t addr)
 {
     int                     i, h;
     uint32_t                a, m;
