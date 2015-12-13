@@ -70,28 +70,6 @@ static void knamed_radix_self_or_prev(knamed_radix_node_t *node,
 static void knamed_radix_del_fix(knamed_radix_t *rt, knamed_radix_node_t *node);
 
 
-static knamed_radix_node_t *
-knamed_radix_new_node(void *elem)
-{
-    knamed_radix_node_t  *node;
-
-    node = knamed_memory_alloc(sizeof(knamed_radix_node_t));
-    if (node == NULL) {
-        return NULL;
-    }
-
-    node->elem = elem;
-    node->parent = NULL;
-    node->pidx = 0;
-    node->len = 0;
-    node->offset = 0;
-    node->capacity = 0;
-    node->array = NULL;
-
-    return node;
-}
-
-
 knamed_radix_t *
 knamed_radix_create(void)
 {
@@ -538,6 +516,27 @@ knamed_radix_traverse_postorder(knamed_radix_node_t *node,
 }
 
 
+static knamed_radix_node_t *
+knamed_radix_new_node(void *elem)
+{
+    knamed_radix_node_t  *node;
+
+    node = knamed_memory_alloc(sizeof(knamed_radix_node_t));
+    if (node == NULL) {
+        return NULL;
+    }
+
+    node->elem = elem;
+    node->parent = NULL;
+    node->pidx = 0;
+    node->len = 0;
+    node->offset = 0;
+    node->capacity = 0;
+    node->array = NULL;
+
+    return node;
+}
+
 
 /*
  * Find a prefix of the key.
@@ -828,6 +827,12 @@ knamed_radix_array_split(knamed_radix_array_t *r, uint8_t *key, uint16_t pos,
 
     } else {
         /* create a new split node. */
+        common_str = NULL;
+        common_len = 0;
+        s1_str = NULL;
+        s1_len = 0;
+        s2_str = NULL;
+        s2_len = 0;
 
         common_len = knamed_radix_str_common(r->str, r->len, addstr, addlen);
 
