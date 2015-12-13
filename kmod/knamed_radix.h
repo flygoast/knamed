@@ -70,8 +70,8 @@ typedef struct knamed_radix {
 
 knamed_radix_t *knamed_radix_create(void);
 void knamed_radix_init(knamed_radix_t *rt);
-void knamed_radix_release(knamed_radix_t *rt);
-void knamed_radix_destroy(knamed_radix_t *rt);
+void knamed_radix_release(knamed_radix_t *rt, void (*elem_func)(void *));
+void knamed_radix_destroy(knamed_radix_t *rt, void (*elem_func)(void *));
 int knamed_radix_insert(knamed_radix_t *rt, uint8_t *key, uint16_t len,
     void *elem);
 void *knamed_radix_delete(knamed_radix_t *rt, uint8_t *key, uint16_t len);

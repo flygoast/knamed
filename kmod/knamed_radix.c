@@ -97,22 +97,22 @@ knamed_radix_init(knamed_radix_t *rt)
 
 
 void
-knamed_radix_release(knamed_radix_t *rt)
+knamed_radix_release(knamed_radix_t *rt, void (*elem_func)(void *))
 {
     if (rt != NULL) {
         if (rt->root != NULL) {
             knamed_radix_traverse_postorder(rt->root, knamed_radix_node_free,
-                                            NULL);
+                                            elem_func);
         }
     }
 }
 
 
 void
-knamed_radix_destroy(knamed_radix_t *rt)
+knamed_radix_destroy(knamed_radix_t *rt, void (*elem_func)(void *))
 {
     if (rt != NULL) {
-        knamed_radix_release(rt);
+        knamed_radix_release(rt, (void *) elem_func);
         knamed_memory_free(rt);
     }
 }
@@ -1123,10 +1123,16 @@ knamed_radix_cleanup_leaf(knamed_radix_node_t *node)
 static void
 knamed_radix_node_free(knamed_radix_node_t *node, void *arg)
 {
-    uint16_t  i;
+    uint16_t    i;
+    void      (*elem_func)(void *);
 
     if (node == NULL) {
         return;
+    }
+
+    if (arg != NULL && node->elem) {
+        elem_func = arg;
+        (*elem_func)(node->elem);
     }
 
     for (i = 0; i < node->len; i++) {
